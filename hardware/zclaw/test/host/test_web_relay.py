@@ -24,9 +24,11 @@ from web_relay import (  # noqa: E402
     is_post_origin_allowed,
     is_probable_serial_exception,
     is_probable_esp_log_line,
+    is_proxy_request_authorized,
     is_request_authorized,
     normalize_api_key,
     normalize_origin,
+    resolve_proxy_target_url,
     resolve_serial_port,
     validate_bind_security,
 )
@@ -113,6 +115,60 @@ class WebRelayTests(unittest.TestCase):
         validate_bind_security("0.0.0.0", "secret")
         with self.assertRaises(RuntimeError):
             validate_bind_security("0.0.0.0", None)
+
+    def test_proxy_request_authorization_accepts_bearer_and_apikey(self) -> None:
+        self.assertTrue(
+            is_proxy_request_authorized(
+                authorization_header="Bearer secret",
+                apikey_header=None,
+                x_zclaw_key=None,
+                expected_key="secret",
+            )
+        )
+        self.assertTrue(
+            is_proxy_request_authorized(
+                authorization_header=None,
+                apikey_header="secret",
+                x_zclaw_key=None,
+                expected_key="secret",
+            )
+        )
+        self.assertTrue(
+            is_proxy_request_authorized(
+                authorization_header=None,
+                apikey_header=None,
+                x_zclaw_key="secret",
+                expected_key="secret",
+            )
+        )
+        self.assertFalse(
+            is_proxy_request_authorized(
+                authorization_header="Bearer wrong",
+                apikey_header=None,
+                x_zclaw_key=None,
+                expected_key="secret",
+            )
+        )
+
+    def test_resolve_proxy_target_url_rewrites_supabase_path(self) -> None:
+        self.assertEqual(
+            resolve_proxy_target_url(
+                upstream_base_url="https://example.supabase.co",
+                proxy_prefix="/proxy/supabase",
+                request_path="/proxy/supabase/rest/v1/todos?limit=2",
+            ),
+            "https://example.supabase.co/rest/v1/todos?limit=2",
+        )
+
+    def test_resolve_proxy_target_url_supports_exact_proxy_path(self) -> None:
+        self.assertEqual(
+            resolve_proxy_target_url(
+                upstream_base_url="https://cloud.infini-ai.com/maas/glm-5/nvidia/chat/completions",
+                proxy_prefix="/proxy/llm",
+                request_path="/proxy/llm",
+            ),
+            "https://cloud.infini-ai.com/maas/glm-5/nvidia/chat/completions",
+        )
 
     def test_log_line_classifier(self) -> None:
         self.assertTrue(is_probable_esp_log_line("I (12) main: hello"))

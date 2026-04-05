@@ -77,6 +77,16 @@ class _FakeStore:
         self.wristband_name = None
         self.squeeze_connected = False
         self.squeeze_name = None
+        self.focus_active = False
+        self.sdnn = None
+        self.hrv = None
+        self.focus = None
+        self.metrics_status = "offline"
+        self.pressure_raw = None
+        self.pressure_norm = None
+        self.squeeze_stress = None
+        self.squeeze_count = None
+        self.battery = None
         self.last_wristband = None
         self.last_squeeze = None
         self.last_presence = None
@@ -100,10 +110,27 @@ class _FakeStore:
     def update_wristband(self, _parsed):
         self.wristband_connected = True
         self.last_wristband = _parsed
+        self.sdnn = _parsed.get("sdnn")
+        self.hrv = _parsed.get("hrv")
+        self.focus = _parsed.get("focus")
+        if _parsed.get("focus_active") is not None:
+            self.focus_active = bool(_parsed["focus_active"])
+        if _parsed.get("metrics_status") is not None:
+            self.metrics_status = _parsed["metrics_status"]
 
     def update_squeeze(self, _parsed):
         self.squeeze_connected = True
         self.last_squeeze = _parsed
+        if _parsed.get("pressure_raw") is not None:
+            self.pressure_raw = _parsed["pressure_raw"]
+        if _parsed.get("pressure_norm") is not None:
+            self.pressure_norm = _parsed["pressure_norm"]
+        if _parsed.get("stress_level") is not None:
+            self.squeeze_stress = _parsed["stress_level"]
+        if _parsed.get("squeeze_count") is not None:
+            self.squeeze_count = _parsed["squeeze_count"]
+        if _parsed.get("battery") is not None:
+            self.battery = _parsed["battery"]
 
     def set_wristband_disconnected(self):
         self.wristband_connected = False
@@ -128,7 +155,10 @@ class BleRunnerTests(unittest.TestCase):
             parse_squeeze=parse_squeeze or (lambda _payload: {}),
         )
         fake_bleak = types.SimpleNamespace(
-            BleakClient=lambda _device: _FakeClient(services or [], read_values=read_values),
+            BleakClient=lambda _device, *args, **kwargs: _FakeClient(
+                services or [],
+                read_values=read_values,
+            ),
             BleakScanner=object,
         )
 
@@ -422,16 +452,29 @@ class BleRunnerTests(unittest.TestCase):
             {"rssi": -57, "distance_m": 0.83, "is_at_desk": True},
         )
 
-    def test_leave_transition_writes_hex_02_to_wristband(self):
-        module, _fake_store = self._import_ble_runner()
+    def test_leave_transition_writes_hex_01_to_wristband_when_focus_active(self):
+        module, fake_store = self._import_ble_runner()
         runner = module.BleRunner()
         runner._wb_client = _FakeClient([])
         runner._wb_client.is_connected = True
         runner.wristband_write_uuid = "write-uuid"
+        fake_store.focus_active = True
 
         asyncio.run(runner._maybe_send_leave_signal(True, False))
 
-        self.assertEqual(runner._wb_client.write_calls, [("write-uuid", b"\x02", False)])
+        self.assertEqual(runner._wb_client.write_calls, [("write-uuid", b"\x01", False)])
+
+    def test_leave_transition_skips_signal_when_focus_inactive(self):
+        module, fake_store = self._import_ble_runner()
+        runner = module.BleRunner()
+        runner._wb_client = _FakeClient([])
+        runner._wb_client.is_connected = True
+        runner.wristband_write_uuid = "write-uuid"
+        fake_store.focus_active = False
+
+        asyncio.run(runner._maybe_send_leave_signal(True, False))
+
+        self.assertEqual(runner._wb_client.write_calls, [])
 
     def test_supabase_sync_maps_focus_and_pressure_fields(self):
         module, _fake_store = self._import_ble_runner()

@@ -1315,6 +1315,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 {
     echo "key,type,encoding,value"
     echo "zclaw,namespace,,"
+    echo "boot_count,data,string,0"
     printf "wifi_ssid,data,string,%s\n" "$(csv_escape "$WIFI_SSID")"
     printf "wifi_pass,data,string,%s\n" "$(csv_escape "$WIFI_PASS")"
     printf "llm_backend,data,string,%s\n" "$(csv_escape "$BACKEND")"

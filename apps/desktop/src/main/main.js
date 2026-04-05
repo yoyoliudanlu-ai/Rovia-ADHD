@@ -21,6 +21,7 @@ const {
   BackendHttpClient,
   deriveBackendBaseUrl
 } = require("./backend-http-client");
+const { runUiSmoke } = require("./ui-smoke");
 
 dotenv.config();
 app.commandLine.appendSwitch("disable-http-cache");
@@ -48,8 +49,24 @@ const HIDDEN_PANEL_TABS = [
   { id: "account", label: "账号" }
 ];
 const PANEL_TABS = [...VISIBLE_PANEL_TABS, ...HIDDEN_PANEL_TABS];
+const ICONS_DIR = path.join(__dirname, "..", "assets", "icons");
+const APP_ICON_PATH = path.join(ICONS_DIR, "rovia-app-icon.png");
+const NAV_ICON_PATH = path.join(ICONS_DIR, "rovia-nav-white.svg");
 
-function createStatusBarIcon() {
+function loadIconFromPath(iconPath, size = null) {
+  const icon = nativeImage.createFromPath(iconPath);
+  if (!icon || icon.isEmpty()) {
+    return null;
+  }
+
+  return size ? icon.resize(size) : icon;
+}
+
+function createAppIcon() {
+  return loadIconFromPath(APP_ICON_PATH);
+}
+
+function createFallbackStatusBarIcon() {
   const svg = `
     <svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
       <path
@@ -63,6 +80,15 @@ function createStatusBarIcon() {
       `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`
     )
     .resize({ width: 16, height: 16 });
+
+  return icon;
+}
+
+function createStatusBarIcon() {
+  const preferredPath = process.platform === "darwin" ? NAV_ICON_PATH : APP_ICON_PATH;
+  const preferredSize =
+    process.platform === "darwin" ? { width: 18, height: 18 } : { width: 20, height: 20 };
+  const icon = loadIconFromPath(preferredPath, preferredSize) || createFallbackStatusBarIcon();
 
   if (process.platform === "darwin") {
     icon.setTemplateImage(true);
@@ -318,6 +344,7 @@ function createStatusTray() {
 }
 
 function createPetWindow() {
+  const appIcon = createAppIcon();
   petWindow = new BrowserWindow({
     width: 236,
     height: 338,
@@ -327,6 +354,7 @@ function createPetWindow() {
     hasShadow: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
       preload: path.join(__dirname, "..", "preload.js"),
       contextIsolation: true,
@@ -362,15 +390,18 @@ function createPetWindow() {
 }
 
 function createPanelWindow() {
+  const appIcon = createAppIcon();
   panelWindow = new BrowserWindow({
     width: 436,
     height: 760,
     frame: false,
     transparent: true,
+    hasShadow: false,
     show: false,
     resizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
       preload: path.join(__dirname, "..", "preload.js"),
       contextIsolation: true,
@@ -526,6 +557,8 @@ function registerIpc() {
           return stateManager.backend.disconnectDevice(payload.deviceType);
         case "devices-reconnect":
           return stateManager.backend.reconnectDevice(payload.deviceType);
+        case "devices-remind":
+          return stateManager.backend.sendReminderSignal(payload);
         case "friends-request":
           return stateManager.backend.requestFriend(payload.friendId);
         case "friends-accept":
@@ -603,6 +636,9 @@ function registerIpc() {
         break;
       case "set-camera-enabled":
         await stateManager.setCameraEnabled(payload.cameraEnabled);
+        break;
+      case "set-wristband-focus-trigger":
+        stateManager.setWristbandFocusTrigger(payload.enabled);
         break;
       case "create-todo":
         await stateManager.createTodo({
@@ -716,6 +752,30 @@ async function bootstrap() {
   });
   sidecarClient.connect();
   stateManager.emitState();
+
+  if (process.env.ROVIA_UI_SMOKE === "1") {
+    runUiSmoke({
+      panelWindow,
+      showPanel,
+      stateManager
+    })
+      .then((result) => {
+        console.log(`UI_SMOKE_RESULT=${JSON.stringify(result)}`);
+      })
+      .catch((error) => {
+        console.error("[ui-smoke] failed", error);
+        console.log(
+          `UI_SMOKE_RESULT=${JSON.stringify({
+            ok: false,
+            error: error?.message || String(error)
+          })}`
+        );
+      })
+      .finally(() => {
+        isQuitting = true;
+        app.quit();
+      });
+  }
 }
 
 app.whenReady().then(async () => {

@@ -37,6 +37,8 @@ const SQUEEZE_TIMELINE_BUCKET_MS = 60 * 1000;
 const SQUEEZE_STATS_WINDOW_MS =
   SQUEEZE_TIMELINE_BUCKETS * SQUEEZE_TIMELINE_BUCKET_MS;
 const SQUEEZE_SENSOR_MAX = 4095;
+const TODO_START_REMINDER_WINDOW_MS = 10 * 60 * 1000;
+const SENSOR_EMIT_INTERVAL_MS = 100;
 
 function clampNumber(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -149,6 +151,16 @@ function hasDefaultTodoSeed(todos) {
   );
 }
 
+function parseTodoStartMs(todo) {
+  const raw = todo?.scheduledAt || todo?.startTime;
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = Date.parse(String(raw));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function buildDefaultAuthState() {
   return {
     configured: false,
@@ -251,7 +263,8 @@ function buildDefaultState() {
     panelOpen: false,
     settings: {
       soundEnabled: false,
-      cameraEnabled: false
+      cameraEnabled: false,
+      wristbandFocusTrigger: false
     },
     auth: buildDefaultAuthState(),
     connection: {
@@ -331,6 +344,8 @@ class RoviaStateManager extends EventEmitter {
     this.unsubscribeTodos = null;
     this.unsubscribeFocusSessions = null;
     this.persistTimer = null;
+    this.sensorEmitTimer = null;
+    this._sensorEmitPending = false;
   }
 
   async init() {
@@ -430,6 +445,8 @@ class RoviaStateManager extends EventEmitter {
   }
 
   tick() {
+    this.maybeFireTodoStartReminder();
+
     if (!this.state.focusSession) {
       return;
     }
@@ -714,6 +731,9 @@ class RoviaStateManager extends EventEmitter {
     const localTagById = new Map(
       this.state.todos.map((todo) => [todo.id, normalizeTodoTag(todo.tag)])
     );
+    const localTodoReminderById = new Map(
+      this.state.todos.map((todo) => [todo.id, todo.startReminderSentAt || null])
+    );
 
     return remoteTodos.map((todo) => ({
       ...todo,
@@ -721,7 +741,9 @@ class RoviaStateManager extends EventEmitter {
       tag: normalizeTodoTag(
         todo.tag || localTagById.get(todo.id) || inferTodoTagByTitle(todo.title)
       ),
-      isActive: todo.id === activeId
+      isActive: todo.id === activeId,
+      startReminderSentAt:
+        todo.startReminderSentAt || localTodoReminderById.get(todo.id) || null
     }));
   }
 
@@ -738,6 +760,8 @@ class RoviaStateManager extends EventEmitter {
           : Boolean(localTodo.isActive),
       priority: remoteTodo.priority ?? localTodo.priority ?? 1,
       backendSynced: true,
+      startReminderSentAt:
+        remoteTodo.startReminderSentAt || localTodo.startReminderSentAt || null,
       updatedAt:
         remoteTodo.updatedAt || localTodo.updatedAt || new Date().toISOString()
     };
@@ -932,6 +956,29 @@ class RoviaStateManager extends EventEmitter {
 
   emitState() {
     this.emit("state", this.getPublicState());
+  }
+
+  /**
+   * 传感器高频更新节流：第一个包立刻 emit，此后 interval ms 内的包合并，
+   * 到期后若有待发包则再 emit 一次（leading + trailing throttle）。
+   * 用于 BLE 数据回调，消除 UI 闪刷同时保持即时响应。
+   */
+  scheduleEmitState(interval = SENSOR_EMIT_INTERVAL_MS) {
+    if (this.sensorEmitTimer !== null) {
+      // 节流窗口内：标记有待发更新，窗口结束时补发
+      this._sensorEmitPending = true;
+      return;
+    }
+    // 立刻发出当前帧
+    this.emitState();
+    this._sensorEmitPending = false;
+    this.sensorEmitTimer = setTimeout(() => {
+      this.sensorEmitTimer = null;
+      if (this._sensorEmitPending) {
+        this._sensorEmitPending = false;
+        this.emitState();
+      }
+    }, interval);
   }
 
   shouldEnableDemoMode() {
@@ -1364,6 +1411,7 @@ class RoviaStateManager extends EventEmitter {
       isActive: !hasActiveTodo,
       priority: 1,
       scheduledAt: payload.scheduledAt || null,
+      startReminderSentAt: null,
       updatedAt: new Date().toISOString()
     };
 
@@ -1478,7 +1526,7 @@ class RoviaStateManager extends EventEmitter {
     );
 
     this.schedulePersist();
-    this.emitState();
+    this.scheduleEmitState();
 
     const tasks = [
       this.safeInsertAppEvent({
@@ -1530,6 +1578,7 @@ class RoviaStateManager extends EventEmitter {
             this.pushCue("hint", "先等你回到桌前", "soft");
             this.schedulePersist();
             this.emitState();
+            await this.safeSendReminderSignal({ reason: "focus_away" });
             await this.safeSyncFocusSession(this.state.focusSession);
           }
         }, 5000);
@@ -1565,6 +1614,12 @@ class RoviaStateManager extends EventEmitter {
 
   async setCameraEnabled(cameraEnabled) {
     this.state.settings.cameraEnabled = Boolean(cameraEnabled);
+    this.schedulePersist();
+    this.emitState();
+  }
+
+  setWristbandFocusTrigger(enabled) {
+    this.state.settings.wristbandFocusTrigger = Boolean(enabled);
     this.schedulePersist();
     this.emitState();
   }
@@ -1646,11 +1701,17 @@ class RoviaStateManager extends EventEmitter {
       };
       this.registerSqueezePulse(event.timestamp);
       this.schedulePersist();
-      this.emitState();
+      this.scheduleEmitState();
       return;
     }
 
     if (event.type === "enter_task") {
+      if (event.focusActive === false) {
+        return;
+      }
+      if (!this.state.settings.wristbandFocusTrigger) {
+        return;
+      }
       await this.startFocus({
         triggerSource: "wearable"
       });
@@ -1724,6 +1785,38 @@ class RoviaStateManager extends EventEmitter {
         break;
       }
     }
+  }
+
+  maybeFireTodoStartReminder(nowMs = Date.now()) {
+    const dueTodos = [];
+    for (const todo of this.state.todos) {
+      if (!todo || todo.status === "done" || todo.startReminderSentAt) {
+        continue;
+      }
+      const startMs = parseTodoStartMs(todo);
+      if (!Number.isFinite(startMs) || nowMs < startMs) {
+        continue;
+      }
+
+      // 避免应用重启后一次性补发太多“过期提醒”。
+      if (nowMs - startMs > TODO_START_REMINDER_WINDOW_MS) {
+        todo.startReminderSentAt = new Date(nowMs).toISOString();
+        continue;
+      }
+
+      todo.startReminderSentAt = new Date(nowMs).toISOString();
+      dueTodos.push(todo);
+    }
+
+    if (!dueTodos.length) {
+      return;
+    }
+
+    const nextTodo = dueTodos[0];
+    this.pushCue("reminder", `任务开始时间到了：${nextTodo.title}`, "soft");
+    this.schedulePersist();
+    this.emitState();
+    void this.safeSendReminderSignal({ reason: "todo_start", signalHex: "02" });
   }
 
   recomputeRuntimeStatus() {
@@ -1841,6 +1934,26 @@ class RoviaStateManager extends EventEmitter {
       await this.supabase.upsertTodo(todo);
     } catch (error) {
       this.markSupabaseUnavailable("[supabase] todo sync failed", error);
+    }
+  }
+
+  async safeSendReminderSignal({
+    reason = "manual",
+    requireFocusActive = false,
+    signalHex = "01"
+  } = {}) {
+    if (!this.state.connection.backend || !this.backend?.sendReminderSignal) {
+      return;
+    }
+
+    try {
+      await this.backend.sendReminderSignal({
+        reason,
+        requireFocusActive,
+        signalHex
+      });
+    } catch (error) {
+      console.warn("[backend] reminder signal failed", error);
     }
   }
 

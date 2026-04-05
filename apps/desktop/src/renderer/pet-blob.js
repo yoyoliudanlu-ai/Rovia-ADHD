@@ -344,9 +344,7 @@ class RoviaBlobController {
       Math.sin(time * (0.6 + this.squeezeActivity * 0.5)) *
       (0.035 + this.squeezeActivity * 0.024);
     const squeezeScaleTarget = resolveSqueezeScaleTarget({
-      pressureRaw: this.squeezePressureRaw,
-      lastChangedAt: this.lastSqueezeChangedAt,
-      nowMs: now
+      pressureRaw: this.squeezePressureRaw
     });
     this.currentSqueezeScale +=
       (squeezeScaleTarget - this.currentSqueezeScale) * 0.12;

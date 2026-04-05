@@ -14,6 +14,7 @@
 #include "nvs_keys.h"
 #include "messages.h"
 #include "gpio_policy.h"
+#include "hrv_server.h"
 #include "weixin_mqtt.h"
 
 #include "freertos/FreeRTOS.h"
@@ -297,6 +298,12 @@ void app_main(void)
         }
     } else if (mqtt_err != ESP_ERR_NOT_FOUND) {
         ESP_LOGW(TAG, "MQTT init failed: %s", esp_err_to_name(mqtt_err));
+    }
+
+    // 10c. Start HRV HTTP server (port 8080)
+    esp_err_t hrv_err = hrv_server_start();
+    if (hrv_err != ESP_OK) {
+        ESP_LOGW(TAG, "HRV server failed to start: %s", esp_err_to_name(hrv_err));
     }
 
     // 11. Start task to clear boot counter after stable period

@@ -7,6 +7,7 @@ GET  /api/devices/scan/raw        → 返回原始扫描诊断（local_name / se
 POST /api/devices/configure       → 设置要连接的设备名
 POST /api/devices/disconnect      → 暂停指定设备的自动连接
 POST /api/devices/reconnect       → 恢复指定设备的自动连接并触发重新发现
+POST /api/devices/remind          → 向手环发送提醒信号（默认 0x01，可传 0x02）
 GET  /api/devices/config          → 当前配置的设备名
 """
 
@@ -61,6 +62,12 @@ class DeviceConfigResponse(BaseModel):
 
 class DeviceActionRequest(BaseModel):
     device_type: str = "all"
+
+
+class DeviceReminderRequest(BaseModel):
+    reason: str = "manual"
+    require_focus_active: bool = False
+    signal_hex: str = "01"
 
 
 def _normalize_device_type(value: str | None) -> str:
@@ -225,3 +232,13 @@ def reconnect_device(body: DeviceActionRequest | None = None):
     device_type = _normalize_device_type(getattr(body, "device_type", "all"))
     ble_runner.trigger_reconnect(device_type)
     return {"ok": True, "device_type": device_type}
+
+
+@router.post("/remind")
+async def send_reminder(body: DeviceReminderRequest | None = None):
+    payload = body or DeviceReminderRequest()
+    return ble_runner.send_reminder_signal(
+        reason=payload.reason.strip() or "manual",
+        require_focus_active=bool(payload.require_focus_active),
+        signal_hex=payload.signal_hex,
+    )

@@ -259,6 +259,26 @@ bool cron_is_time_synced(void)
     return s_time_synced;
 }
 
+esp_err_t cron_set_time_manual(time_t unix_time)
+{
+    struct timeval tv = {0};
+
+    if (unix_time <= 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    tv.tv_sec = unix_time;
+    tv.tv_usec = 0;
+    if (settimeofday(&tv, NULL) != 0) {
+        ESP_LOGE(TAG, "Failed to set manual time");
+        return ESP_FAIL;
+    }
+
+    s_time_synced = true;
+    ESP_LOGI(TAG, "Manual time set: %ld", (long)unix_time);
+    return ESP_OK;
+}
+
 void cron_get_time_str(char *buf, size_t buf_len)
 {
     time_t now;

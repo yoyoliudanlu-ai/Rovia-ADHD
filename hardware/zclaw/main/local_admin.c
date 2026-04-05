@@ -4,12 +4,14 @@
 #include "boot_guard.h"
 #include "channel.h"
 #include "config.h"
+#include "cron.h"
 #include "memory.h"
 #include "nvs_keys.h"
 #include "wifi_credentials.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #ifndef TEST_BUILD
 #include "freertos/FreeRTOS.h"
@@ -35,6 +37,7 @@ static bool s_wifi_stack_ready = false;
 static bool s_wifi_netif_ready = false;
 static bool s_wifi_handlers_registered = false;
 static bool s_wifi_started = false;
+static esp_netif_t *s_wifi_netif = NULL;
 static bool s_wifi_connected = false;
 static bool s_wifi_connect_in_progress = false;
 static int s_wifi_retry_num = 0;
@@ -116,6 +119,65 @@ static const char *wifi_authmode_name(wifi_auth_mode_t mode)
     }
 }
 
+static void configure_wifi_dns_server(esp_netif_dns_type_t type, const char *ip_text)
+{
+    esp_netif_dns_info_t dns = {0};
+
+    if (!s_wifi_netif || !ip_text || ip_text[0] == '\0') {
+        return;
+    }
+
+    if (esp_netif_str_to_ip4(ip_text, &dns.ip.u_addr.ip4) != ESP_OK) {
+        ESP_LOGW(TAG, "Invalid DNS fallback IP: %s", ip_text);
+        return;
+    }
+
+    dns.ip.type = ESP_IPADDR_TYPE_V4;
+    if (esp_netif_set_dns_info(s_wifi_netif, type, &dns) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set DNS %s for type %d", ip_text, (int)type);
+        return;
+    }
+
+    ESP_LOGI(TAG, "DNS type %d -> %s", (int)type, ip_text);
+}
+
+static void configure_wifi_dns_fallback(void)
+{
+    esp_netif_dns_info_t main_dns = {0};
+    esp_netif_dns_info_t backup_dns = {0};
+    bool main_dns_ready = false;
+    bool backup_dns_ready = false;
+
+    if (!s_wifi_netif) {
+        return;
+    }
+
+    if (esp_netif_get_dns_info(s_wifi_netif, ESP_NETIF_DNS_MAIN, &main_dns) == ESP_OK) {
+        main_dns_ready = (main_dns.ip.type == ESP_IPADDR_TYPE_V4 &&
+                          main_dns.ip.u_addr.ip4.addr != 0);
+    }
+    if (esp_netif_get_dns_info(s_wifi_netif, ESP_NETIF_DNS_BACKUP, &backup_dns) == ESP_OK) {
+        backup_dns_ready = (backup_dns.ip.type == ESP_IPADDR_TYPE_V4 &&
+                            backup_dns.ip.u_addr.ip4.addr != 0);
+    }
+
+    if (main_dns_ready) {
+        ESP_LOGI(TAG, "Keeping DHCP DNS: main=" IPSTR,
+                 IP2STR(&main_dns.ip.u_addr.ip4));
+        if (backup_dns_ready) {
+            ESP_LOGI(TAG, "Keeping DHCP DNS backup=" IPSTR,
+                     IP2STR(&backup_dns.ip.u_addr.ip4));
+        } else {
+            ESP_LOGI(TAG, "No DHCP backup DNS provided");
+        }
+        return;
+    }
+
+    ESP_LOGW(TAG, "DHCP did not provide DNS, applying fallback resolvers");
+    configure_wifi_dns_server(ESP_NETIF_DNS_MAIN, "223.5.5.5");
+    configure_wifi_dns_server(ESP_NETIF_DNS_BACKUP, "119.29.29.29");
+}
+
 static void local_admin_wifi_event_handler(void *arg,
                                            esp_event_base_t event_base,
                                            int32_t event_id,
@@ -158,6 +220,7 @@ static void local_admin_wifi_event_handler(void *arg,
         s_wifi_retry_num = 0;
         snprintf(s_current_ip, sizeof(s_current_ip), IPSTR, IP2STR(&event->ip_info.ip));
         ESP_LOGI(TAG, "Connected: %s", s_current_ip);
+        configure_wifi_dns_fallback();
         if (s_wifi_event_group) {
             xEventGroupSetBits(s_wifi_event_group, LOCAL_ADMIN_WIFI_CONNECTED_BIT);
         }
@@ -224,7 +287,7 @@ static esp_err_t ensure_wifi_stack_ready(void)
     }
 
     if (!s_wifi_netif_ready) {
-        esp_netif_create_default_wifi_sta();
+        s_wifi_netif = esp_netif_create_default_wifi_sta();
         s_wifi_netif_ready = true;
     }
 
@@ -449,6 +512,7 @@ bool local_admin_is_command(const char *message)
 {
     return agent_is_command(message, "reboot") ||
            agent_is_command(message, "wifi") ||
+           agent_is_command(message, "time") ||
            agent_is_command(message, "bootcount") ||
            agent_is_command(message, "factory-reset");
 }
@@ -485,16 +549,52 @@ bool local_admin_handle_command(const char *message,
     }
 
     if (agent_is_command(message, "bootcount")) {
-        int boot_count = boot_guard_get_persisted_count();
-        int remaining_before_safe = MAX_BOOT_FAILURES - boot_count;
-        if (remaining_before_safe < 0) {
-            remaining_before_safe = 0;
-        }
+        int boot_count;
+        int remaining_before_safe;
+        esp_err_t boot_count_err;
 
         payload = agent_command_payload(message, "bootcount");
         if (payload && payload[0] != '\0') {
-            snprintf(result, result_len, "Error: /bootcount does not take arguments");
-            return false;
+            if (strlen(payload) >= sizeof(payload_buf)) {
+                snprintf(result, result_len, "Error: /bootcount arguments too long");
+                return false;
+            }
+
+            snprintf(payload_buf, sizeof(payload_buf), "%s", payload);
+            token = strtok(payload_buf, " \t\r\n");
+            extra = strtok(NULL, " \t\r\n");
+            if (!token) {
+                payload = NULL;
+            } else if (strcmp(token, "clear") == 0 && extra == NULL) {
+                boot_count_err = boot_guard_set_persisted_count(0);
+                if (boot_count_err != ESP_OK) {
+                    snprintf(result, result_len, "Error: failed to clear boot count (%s)",
+                             esp_err_to_name(boot_count_err));
+                    return false;
+                }
+                boot_count = 0;
+                remaining_before_safe = MAX_BOOT_FAILURES - boot_count;
+                if (remaining_before_safe < 0) {
+                    remaining_before_safe = 0;
+                }
+                snprintf(result, result_len,
+                         "Boot count cleared: persisted=%d max_failures=%d remaining_before_safe=%d safe_mode=%s configured=%s",
+                         boot_count,
+                         MAX_BOOT_FAILURES,
+                         remaining_before_safe,
+                         s_safe_mode ? "yes" : "no",
+                         s_device_configured ? "yes" : "no");
+                return true;
+            } else {
+                snprintf(result, result_len, "Error: use /bootcount or /bootcount clear");
+                return false;
+            }
+        }
+
+        boot_count = boot_guard_get_persisted_count();
+        remaining_before_safe = MAX_BOOT_FAILURES - boot_count;
+        if (remaining_before_safe < 0) {
+            remaining_before_safe = 0;
         }
 
         snprintf(result, result_len,
@@ -504,6 +604,66 @@ bool local_admin_handle_command(const char *message,
                  remaining_before_safe,
                  s_safe_mode ? "yes" : "no",
                  s_device_configured ? "yes" : "no");
+        return true;
+    }
+
+    if (agent_is_command(message, "time")) {
+        char time_str[32] = {0};
+        long long epoch = 0;
+        char *endptr = NULL;
+        esp_err_t time_err;
+
+        payload = agent_command_payload(message, "time");
+        if (!payload || payload[0] == '\0' || strcmp(payload, "status") == 0) {
+            cron_get_time_str(time_str, sizeof(time_str));
+            snprintf(result, result_len, "Time: %s synced=%s",
+                     time_str,
+                     cron_is_time_synced() ? "yes" : "no");
+            return true;
+        }
+
+        if (strlen(payload) >= sizeof(payload_buf)) {
+            snprintf(result, result_len, "Error: /time arguments too long");
+            return false;
+        }
+
+        snprintf(payload_buf, sizeof(payload_buf), "%s", payload);
+        token = strtok(payload_buf, " \t\r\n");
+        extra = strtok(NULL, " \t\r\n");
+        if (!token) {
+            cron_get_time_str(time_str, sizeof(time_str));
+            snprintf(result, result_len, "Time: %s synced=%s",
+                     time_str,
+                     cron_is_time_synced() ? "yes" : "no");
+            return true;
+        }
+
+        if (strcmp(token, "set") != 0 || !extra) {
+            snprintf(result, result_len, "Error: use /time, /time status, or /time set <unix_epoch>");
+            return false;
+        }
+
+        payload = strtok(NULL, " \t\r\n");
+        if (payload != NULL) {
+            snprintf(result, result_len, "Error: use /time set <unix_epoch>");
+            return false;
+        }
+
+        epoch = strtoll(extra, &endptr, 10);
+        if (!endptr || *endptr != '\0' || epoch <= 0) {
+            snprintf(result, result_len, "Error: unix_epoch must be a positive integer");
+            return false;
+        }
+
+        time_err = cron_set_time_manual((time_t)epoch);
+        if (time_err != ESP_OK) {
+            snprintf(result, result_len, "Error: failed to set time (%s)", esp_err_to_name(time_err));
+            return false;
+        }
+
+        cron_get_time_str(time_str, sizeof(time_str));
+        snprintf(result, result_len, "Time set: epoch=%lld local=%s synced=%s",
+                 epoch, time_str, cron_is_time_synced() ? "yes" : "no");
         return true;
     }
 

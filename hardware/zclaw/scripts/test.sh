@@ -68,6 +68,7 @@ run_host_tests() {
         test_tools_supabase.c \
         test_tools_system_diag.c \
         test_llm_auth.c \
+        test_mqtt_uri_parse.c \
         test_wifi_credentials.c \
         test_runner.c \
         mock_esp.c \
@@ -85,6 +86,7 @@ run_host_tests() {
         ../../main/text_buffer.c \
         ../../main/boot_guard.c \
         ../../main/memory_keys.c \
+        ../../main/mqtt_uri_parse.c \
         ../../main/llm_auth.c \
         ../../main/wifi_credentials.c \
         ../../main/telegram_update.c \

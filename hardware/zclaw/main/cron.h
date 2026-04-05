@@ -7,6 +7,7 @@
 #include "freertos/queue.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
 // Cron entry types
 typedef enum {
@@ -57,5 +58,8 @@ void cron_get_timezone_abbrev(char *buf, size_t buf_len);
 
 // Check if time is synced
 bool cron_is_time_synced(void);
+
+// Manually set Unix time and mark time sync ready.
+esp_err_t cron_set_time_manual(time_t unix_time);
 
 #endif // CRON_H

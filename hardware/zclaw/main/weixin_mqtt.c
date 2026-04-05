@@ -3,6 +3,7 @@
 #include "messages.h"
 #include "nvs_keys.h"
 #include "memory.h"
+#include "mqtt_uri_parse.h"
 
 #include "mqtt_client.h"
 #include "esp_crt_bundle.h"
@@ -25,6 +26,22 @@ static bool                      s_connected    = false;
 // Topic strings built at init time
 static char s_topic_in[MQTT_TOPIC_MAX_LEN + 4];   // "<prefix>/in"
 static char s_topic_out[MQTT_TOPIC_MAX_LEN + 5];  // "<prefix>/out"
+
+static esp_mqtt_transport_t transport_from_parts(mqtt_uri_transport_t transport)
+{
+    switch (transport) {
+        case MQTT_URI_TRANSPORT_TCP:
+            return MQTT_TRANSPORT_OVER_TCP;
+        case MQTT_URI_TRANSPORT_SSL:
+            return MQTT_TRANSPORT_OVER_SSL;
+        case MQTT_URI_TRANSPORT_WS:
+            return MQTT_TRANSPORT_OVER_WS;
+        case MQTT_URI_TRANSPORT_WSS:
+            return MQTT_TRANSPORT_OVER_WSS;
+        default:
+            return MQTT_TRANSPORT_UNKNOWN;
+    }
+}
 
 // ── 解析收到的 MQTT 消息 → 放入 input_queue ──────────────────
 
@@ -164,6 +181,7 @@ esp_err_t weixin_mqtt_init(void)
     char user[MQTT_USER_MAX_LEN + 1] = {0};
     char pass[MQTT_PASS_MAX_LEN + 1] = {0};
     char topic[MQTT_TOPIC_MAX_LEN + 1] = {0};
+    mqtt_uri_parts_t uri_parts = {0};
 
     // 读 NVS
     if (!memory_get(NVS_KEY_MQTT_URI, uri, sizeof(uri)) || !uri[0]) {
@@ -180,9 +198,17 @@ esp_err_t weixin_mqtt_init(void)
     snprintf(s_topic_in,  sizeof(s_topic_in),  "%s/in",  topic);
     snprintf(s_topic_out, sizeof(s_topic_out), "%s/out", topic);
 
+    if (!mqtt_uri_parse(uri, &uri_parts)) {
+        ESP_LOGE(TAG, "invalid mqtt_uri: %s", uri);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     esp_mqtt_client_config_t cfg = {
-        .broker.address.uri                    = uri,
+        .broker.address.hostname               = uri_parts.hostname,
+        .broker.address.port                   = uri_parts.port,
+        .broker.address.transport              = transport_from_parts(uri_parts.transport),
         .broker.verification.crt_bundle_attach = esp_crt_bundle_attach,
+        .broker.verification.common_name       = uri_parts.hostname,
         .credentials.username                  = user[0] ? user : NULL,
         .credentials.authentication.password   = pass[0] ? pass : NULL,
         .network.reconnect_timeout_ms          = MQTT_RECONNECT_MS,

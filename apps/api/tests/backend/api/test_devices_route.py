@@ -292,6 +292,70 @@ class DevicesRouteTests(unittest.TestCase):
         self.assertEqual(reconnected["device_type"], "squeeze")
         self.assertTrue(reconnected["ok"])
 
+    def test_remind_route_forwards_signal_hex(self):
+        calls = []
+        fake_bleak = types.SimpleNamespace(BleakScanner=_FakeBleakScanner)
+        fake_fastapi = types.SimpleNamespace(
+            APIRouter=lambda *args, **kwargs: types.SimpleNamespace(
+                get=lambda *a, **k: (lambda fn: fn),
+                post=lambda *a, **k: (lambda fn: fn),
+            ),
+            HTTPException=Exception,
+        )
+        fake_pydantic = types.SimpleNamespace(BaseModel=_FakeBaseModel)
+        fake_store_module = types.SimpleNamespace(telemetry_store=object())
+        fake_ble_runner_module = types.SimpleNamespace(
+            ble_runner=types.SimpleNamespace(
+                wristband_name="Band-001",
+                wristband_notify_uuid="uuid-read",
+                squeeze_name="NieNie-001",
+                squeeze_notify_uuid="uuid-sq",
+                reconfigure=lambda **kwargs: None,
+                connection_diagnostics=lambda: {},
+                send_reminder_signal=lambda **kwargs: calls.append(kwargs)
+                or {"ok": True, "sent": True},
+            ),
+            _display_name=lambda device, adv=None: (
+                (getattr(adv, "local_name", None) or "")
+                or (getattr(device, "name", None) or "")
+            ).strip(),
+        )
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "bleak": fake_bleak,
+                "fastapi": fake_fastapi,
+                "pydantic": fake_pydantic,
+                "backend.api.store": fake_store_module,
+                "backend.api.ble_runner": fake_ble_runner_module,
+            },
+        ):
+            sys.modules.pop("backend.api.routes.devices", None)
+            from backend.api.routes.devices import send_reminder, DeviceReminderRequest
+
+            result = asyncio.run(
+                send_reminder(
+                    DeviceReminderRequest(
+                        reason="todo_start",
+                        require_focus_active=False,
+                        signal_hex="02",
+                    )
+                )
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "reason": "todo_start",
+                    "require_focus_active": False,
+                    "signal_hex": "02",
+                }
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

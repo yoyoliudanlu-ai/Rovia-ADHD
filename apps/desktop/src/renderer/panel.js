@@ -51,6 +51,7 @@ const squeezeSelectedName = document.getElementById("squeeze-selected-name");
 const squeezeOnlineState = document.getElementById("squeeze-online-state");
 const squeezePressureRaw = document.getElementById("squeeze-pressure-raw");
 const squeezeConnectionCopy = document.getElementById("squeeze-connection-copy");
+const wristbandFocusTriggerToggle = document.getElementById("wristband-focus-trigger-toggle");
 const cameraStatus = document.getElementById("camera-status");
 const cameraCopy = document.getElementById("camera-copy");
 const cameraStart = document.getElementById("camera-start");
@@ -153,6 +154,7 @@ const LOCALE_STORAGE_KEY = "rovia-panel-locale";
 const DEVICE_SELECTION_STORAGE_KEY = "rovia-device-selection";
 const FRIEND_REQUEST_STORAGE_KEY = "rovia-friend-requests";
 const SQUEEZE_SENSOR_MAX = 4095;
+const DEVICE_STATUS_POLL_MS = 1200;
 let deviceModuleState = {
   scanResults: [],
   selected: loadDeviceSelections(),
@@ -1324,7 +1326,7 @@ function appendTodoGroup(container, title, todos, options = {}) {
 
     const list = document.createElement("div");
     list.className = "todo-group-list";
-    todos.forEach((todo) => {
+    todos.forEach((todo, index) => {
       list.appendChild(createTodoCard(todo, index));
     });
 
@@ -2143,8 +2145,13 @@ function renderSingleDeviceConnection({
         : status?.is_at_desk === false
           ? currentLocale === "zh" ? "离位" : "Away"
           : "--";
+    const liveHrv = Number(currentState?.metrics?.hrv);
     wristbandHrv.textContent =
-      status?.hrv !== null && status?.hrv !== undefined ? `${Math.round(status.hrv)}` : "--";
+      Number.isFinite(liveHrv) && liveHrv > 0
+        ? `${Math.round(liveHrv)}`
+        : status?.hrv !== null && status?.hrv !== undefined
+          ? `${Math.round(status.hrv)}`
+          : "--";
     return;
   }
 
@@ -2152,9 +2159,18 @@ function renderSingleDeviceConnection({
     status?.connected
       ? currentLocale === "zh" ? "在线" : "Online"
       : currentLocale === "zh" ? "离线" : "Offline";
+  const livePressureRaw = Number(currentState?.metrics?.pressureRaw);
+  const hasLivePressure =
+    Number.isFinite(livePressureRaw) &&
+    (livePressureRaw > 0 || Boolean(status?.connected));
+  const resolvedPressureRaw = hasLivePressure
+    ? Math.round(clampNumber(livePressureRaw, 0, SQUEEZE_SENSOR_MAX))
+    : status?.pressure_raw !== null && status?.pressure_raw !== undefined
+      ? Math.round(status.pressure_raw)
+      : null;
   squeezePressureRaw.textContent =
-    status?.pressure_raw !== null && status?.pressure_raw !== undefined
-      ? `${Math.round(status.pressure_raw)}`
+    resolvedPressureRaw !== null
+      ? `${resolvedPressureRaw}`
       : "--";
 }
 
@@ -2249,6 +2265,24 @@ async function refreshDeviceStatus() {
   }
 }
 
+function withPromiseTimeout(promise, timeoutMs, errorFactory) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(errorFactory());
+    }, timeoutMs);
+
+    Promise.resolve(promise)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 async function refreshDeviceScan({ timeout = 5 } = {}) {
   if (!window.rovia.scanDevices) {
     return;
@@ -2258,7 +2292,18 @@ async function refreshDeviceScan({ timeout = 5 } = {}) {
   renderDeviceConnector();
 
   try {
-    const result = await window.rovia.scanDevices(timeout);
+    const normalizedTimeout = Math.min(Math.max(Number(timeout) || 5, 2), 15);
+    const scanTimeoutMs = Math.round((normalizedTimeout + 1) * 1000);
+    const result = await withPromiseTimeout(
+      window.rovia.scanDevices(normalizedTimeout),
+      scanTimeoutMs,
+      () =>
+        new Error(
+          currentLocale === "zh"
+            ? "设备扫描超时，请检查蓝牙权限后重试。"
+            : "Device scan timed out. Check Bluetooth permission and retry."
+        )
+    );
     deviceModuleState.scanResults = normalizeScanResults(result?.devices);
     deviceModuleState.scanLoaded = true;
     deviceModuleState.scanFeedback = "";
@@ -2344,7 +2389,7 @@ function startDeviceStatusPolling() {
     refreshDeviceStatus().then(() => {
       renderDeviceConnector();
     });
-  }, 5000);
+  }, DEVICE_STATUS_POLL_MS);
 }
 
 function renderDeviceMetrics(metrics) {
@@ -2437,6 +2482,15 @@ function renderProfile(state) {
   profileBio.textContent = state.connection.supabase || state.connection.backend
     ? t("account.profileBioConnected")
     : t("account.profileBioLocal");
+}
+
+function renderWristbandFocusTrigger() {
+  if (!wristbandFocusTriggerToggle) {
+    return;
+  }
+  const enabled = Boolean(currentState?.settings?.wristbandFocusTrigger);
+  wristbandFocusTriggerToggle.textContent = enabled ? "已开启" : "已关闭";
+  wristbandFocusTriggerToggle.dataset.active = String(enabled);
 }
 
 function renderCameraState() {
@@ -2842,6 +2896,7 @@ function render(state) {
   renderProfile(state);
   syncCameraPreference(state);
   renderCameraState();
+  renderWristbandFocusTrigger();
   renderDeviceConnector();
 }
 
@@ -3045,6 +3100,13 @@ if (cameraStop) {
   cameraStop.addEventListener("click", async () => {
     await window.rovia.setCameraEnabled(false);
     stopCamera();
+  });
+}
+
+if (wristbandFocusTriggerToggle) {
+  wristbandFocusTriggerToggle.addEventListener("click", () => {
+    const next = !Boolean(currentState?.settings?.wristbandFocusTrigger);
+    window.rovia.setWristbandFocusTrigger(next);
   });
 }
 

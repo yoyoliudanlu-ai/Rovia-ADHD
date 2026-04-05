@@ -21,6 +21,7 @@ bool tools_i2c_write_handler(const cJSON *input, char *result, size_t result_len
 bool tools_i2c_read_handler(const cJSON *input, char *result, size_t result_len);
 bool tools_i2c_write_read_handler(const cJSON *input, char *result, size_t result_len);
 bool tools_dht_read_handler(const cJSON *input, char *result, size_t result_len);
+bool tools_max30102_read_handler(const cJSON *input, char *result, size_t result_len);
 bool tools_imu_read_handler(const cJSON *input, char *result, size_t result_len);
 
 // Memory
@@ -48,6 +49,9 @@ bool tools_create_tool_handler(const cJSON *input, char *result, size_t result_l
 bool tools_list_user_tools_handler(const cJSON *input, char *result, size_t result_len);
 bool tools_delete_user_tool_handler(const cJSON *input, char *result, size_t result_len);
 bool tools_supabase_list_todos_handler(const cJSON *input, char *result, size_t result_len);
+bool tools_supabase_create_todo_handler(const cJSON *input, char *result, size_t result_len);
+bool tools_supabase_update_todo_handler(const cJSON *input, char *result, size_t result_len);
+bool tools_supabase_complete_todo_handler(const cJSON *input, char *result, size_t result_len);
 
 #ifdef TEST_BUILD
 bool tools_dht_test_decode_bytes(const char *model_name,
@@ -61,6 +65,8 @@ void tools_dht_test_set_mock_failure(const char *error_message);
 void tools_supabase_test_reset(void);
 void tools_supabase_test_set_http_response(int status_code, const char *body);
 const char *tools_supabase_test_last_request_url(void);
+const char *tools_supabase_test_last_request_method(void);
+const char *tools_supabase_test_last_request_body(void);
 #endif
 
 #endif // TOOLS_HANDLERS_H

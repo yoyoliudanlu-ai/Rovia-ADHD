@@ -271,6 +271,45 @@ test("fetchDashboardSnapshot includes backend friends and ranking", async () => 
   }
 });
 
+test("sendReminderSignal posts to devices remind endpoint", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith("/api/devices/remind")) {
+      return jsonResponse({ ok: true, sent: true });
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+
+  try {
+    const client = new BackendHttpClient({
+      baseUrl: "http://127.0.0.1:8010"
+    });
+
+    const result = await client.sendReminderSignal({
+      reason: "todo_start",
+      requireFocusActive: false,
+      signalHex: "02"
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url.endsWith("/api/devices/remind"), true);
+    assert.equal(
+      JSON.parse(calls[0].options.body).reason,
+      "todo_start"
+    );
+    assert.equal(
+      JSON.parse(calls[0].options.body).signal_hex,
+      "02"
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("requestFriend and acceptFriend call backend friend actions", async () => {
   const calls = [];
   const originalFetch = global.fetch;

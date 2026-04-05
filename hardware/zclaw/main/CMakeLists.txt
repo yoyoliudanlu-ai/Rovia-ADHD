@@ -30,6 +30,7 @@ idf_component_register(
         "telegram_token.c"
         "cron.c"
         "memory_keys.c"
+        "mqtt_uri_parse.c"
         "telegram_update.c"
         "text_buffer.c"
         "security.c"
@@ -39,8 +40,10 @@ idf_component_register(
         "boot_guard.c"
         "user_tools.c"
         "wifi_credentials.c"
+        "tools_max30102.c"
         "tools_imu.c"
         "weixin_mqtt.c"
+        "hrv_server.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash

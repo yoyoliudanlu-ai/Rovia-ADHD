@@ -27,6 +27,16 @@ def _env_enabled(name: str, default: bool = True) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
+
+
 BLE_RUNNER_ENABLED = _env_enabled("ENABLE_BLE_RUNNER", default=True)
 
 try:
@@ -56,11 +66,13 @@ SQUEEZE_INPUT_UUID = os.getenv(
 )
 SQUEEZE_WRITE_UUID = os.getenv("SQUEEZE_WRITE_CHAR_UUID", "")
 
-SCAN_INTERVAL_S        = float(os.getenv("BLE_SCAN_INTERVAL_S", "3"))
-RECONNECT_INTERVAL_S   = float(os.getenv("BLE_RECONNECT_INTERVAL_S", "5"))
-DEVICE_TIMEOUT_S       = float(os.getenv("BLE_DEVICE_TIMEOUT_S", "15"))
-READ_FALLBACK_AFTER_S  = float(os.getenv("BLE_READ_FALLBACK_AFTER_S", "6"))
-SUPABASE_SYNC_INTERVAL_S = float(os.getenv("SUPABASE_SYNC_INTERVAL_S", "12"))
+# 主循环节奏：默认 0.25s，确保 read-fallback 场景也能平滑刷新压力值。
+SCAN_INTERVAL_S          = max(0.08, _env_float("BLE_SCAN_INTERVAL_S", 0.25))
+RECONNECT_INTERVAL_S     = max(0.5, _env_float("BLE_RECONNECT_INTERVAL_S", 5.0))
+DEVICE_TIMEOUT_S         = max(1.0, _env_float("BLE_DEVICE_TIMEOUT_S", 15.0))
+READ_FALLBACK_AFTER_S    = max(0.2, _env_float("BLE_READ_FALLBACK_AFTER_S", 6.0))
+SUPABASE_SYNC_INTERVAL_S = max(2.0, _env_float("SUPABASE_SYNC_INTERVAL_S", 12.0))
+GATT_RSSI_INTERVAL_S     = max(2.0, _env_float("BLE_GATT_RSSI_INTERVAL_S", 60.0))
 
 # RSSI 在位判定（迟滞）
 RSSI_ENTER_DESK = int(os.getenv("RSSI_ENTER_DESK", "-58"))
@@ -87,6 +99,7 @@ class BleRunner:
         self._wb_device = None
         self._sq_device = None
         self._wb_ts = 0.0
+        self._wb_gatt_rssi_ts = 0.0
         self._sq_ts = 0.0
         self._wb_rssi: float | None = None
         self._is_at_desk = False
@@ -177,6 +190,8 @@ class BleRunner:
         self._sq_io = IoCharacteristics()
         self._wb_available_chars = []
         self._sq_available_chars = []
+        self._wb_last_connect_attempt_at = None
+        self._sq_last_connect_attempt_at = None
 
     async def _run(self):
         def on_adv(device, adv):
@@ -199,13 +214,7 @@ class BleRunner:
                 wb_alive = self._wb_device is not None and (now - self._wb_ts) < DEVICE_TIMEOUT_S
                 sq_alive = self._sq_device is not None and (now - self._sq_ts) < DEVICE_TIMEOUT_S
 
-                # 在位判定（迟滞）
-                if self._reconfigure_pending:
-                    self._reconfigure_pending = False
-
-                previous_at_desk = self._is_at_desk
                 self._publish_presence(wb_alive)
-                await self._maybe_send_leave_signal(previous_at_desk, self._is_at_desk)
                 if _should_drop_connection(wb_alive, self._wb_client):
                     await self._disconnect(which="wristband")
                     telemetry_store.set_wristband_disconnected()
@@ -215,16 +224,87 @@ class BleRunner:
                     telemetry_store.set_squeeze_disconnected()
 
                 # 尝试连接
-                if wb_alive and self.wristband_name:
+                if (
+                    wb_alive
+                    and self.wristband_name
+                    and self._can_attempt_connect(
+                        self._wb_client,
+                        self._wb_connecting,
+                        self._wb_last_connect_attempt_at,
+                    )
+                ):
                     await self._ensure_wristband()
-                if sq_alive and self.squeeze_name:
+                if (
+                    sq_alive
+                    and self.squeeze_name
+                    and self._can_attempt_connect(
+                        self._sq_client,
+                        self._sq_connecting,
+                        self._sq_last_connect_attempt_at,
+                    )
+                ):
                     await self._ensure_squeeze()
 
                 # 如果输入特征是 read，则通过轮询读取最新值。
                 await self._poll_read_characteristics_once()
+                await self._try_read_wb_gatt_rssi()
                 self._maybe_sync_supabase()
 
     # ── 连接管理 ──────────────────────────────────────────────
+
+    def _make_wb_disconnect_cb(self):
+        """GATT 断线时立即重置时间戳，让下一个扫描周期能触发重连。"""
+        loop = self._loop
+        def _on_wb_disconnect(_client):
+            log.info("Wristband GATT disconnected")
+            self._wb_client = None
+            self._wb_io = IoCharacteristics()
+            telemetry_store.set_wristband_disconnected()
+            if loop:
+                self._wb_ts = loop.time()  # 刷新时间戳，确保 wb_alive 保持 True 一段时间
+        return _on_wb_disconnect
+
+    def _make_sq_disconnect_cb(self):
+        loop = self._loop
+        def _on_sq_disconnect(_client):
+            log.info("Squeeze GATT disconnected")
+            self._sq_client = None
+            self._sq_io = IoCharacteristics()
+            telemetry_store.set_squeeze_disconnected()
+            if loop:
+                self._sq_ts = loop.time()
+        return _on_sq_disconnect
+
+    async def _try_read_wb_gatt_rssi(self):
+        """每分钟从 GATT 连接读一次 RSSI，让设备停止广播后在位判定仍然新鲜。"""
+        if self._wb_client is None or not self._wb_client.is_connected:
+            return
+        now = time.time()
+        if now - self._wb_gatt_rssi_ts < GATT_RSSI_INTERVAL_S:
+            return
+        self._wb_gatt_rssi_ts = now
+        try:
+            rssi = await self._wb_client.get_rssi()
+            if rssi is not None:
+                self._wb_rssi = float(rssi)
+                self._wb_ts = self._loop.time()
+                log.debug("Wristband GATT RSSI: %s dBm", rssi)
+        except Exception as exc:
+            log.debug("GATT RSSI read failed: %s", exc)
+
+    @staticmethod
+    def _can_attempt_connect(
+        client: BleakClient | None,
+        connecting: bool,
+        last_attempt_at: float | None,
+    ) -> bool:
+        if connecting:
+            return False
+        if client and client.is_connected:
+            return False
+        if last_attempt_at is None:
+            return True
+        return (time.time() - last_attempt_at) >= RECONNECT_INTERVAL_S
 
     async def _ensure_wristband(self):
         if self._wb_connecting:
@@ -234,7 +314,7 @@ class BleRunner:
         self._wb_connecting = True
         self._wb_last_connect_attempt_at = time.time()
         try:
-            client = BleakClient(self._wb_device)
+            client = BleakClient(self._wb_device, disconnected_callback=self._make_wb_disconnect_cb())
             await client.connect()
             self._wb_available_chars = await self._describe_characteristics(client)
             channels = await self._resolve_io_characteristics(
@@ -272,7 +352,7 @@ class BleRunner:
         self._sq_connecting = True
         self._sq_last_connect_attempt_at = time.time()
         try:
-            client = BleakClient(self._sq_device)
+            client = BleakClient(self._sq_device, disconnected_callback=self._make_sq_disconnect_cb())
             await client.connect()
             self._sq_available_chars = await self._describe_characteristics(client)
             channels = await self._resolve_io_characteristics(
@@ -487,8 +567,7 @@ class BleRunner:
                 return
 
             if self._wb_client and self._wb_client.is_connected:
-                # 一些手环在建立 GATT 连接后会停止广播。
-                # 这时继续保留最近一次 RSSI，而不是误判成"设备离线"。
+                # 设备连接后停止广播时，保留最近一次 RSSI，不误判成离线
                 telemetry_store.update_presence(
                     self._wb_rssi,
                     _estimate_distance_m(self._wb_rssi),
@@ -504,21 +583,121 @@ class BleRunner:
         self._is_at_desk = False
         telemetry_store.update_presence(None, None, False)
 
-    async def _maybe_send_leave_signal(self, previous_at_desk: bool, current_at_desk: bool):
-        if not previous_at_desk or current_at_desk:
-            return
+    async def _send_wristband_signal(
+        self,
+        *,
+        payload: bytes,
+        reason: str = "manual",
+        require_focus_active: bool = False,
+    ) -> dict[str, Any]:
+        if require_focus_active and not bool(getattr(telemetry_store, "focus_active", False)):
+            return {
+                "ok": True,
+                "sent": False,
+                "reason": reason,
+                "skipped": "focus_inactive",
+            }
         if self._wb_client is None or not self._wb_client.is_connected:
-            return
+            return {
+                "ok": False,
+                "sent": False,
+                "reason": reason,
+                "error": "wristband_not_connected",
+            }
         if not self.wristband_write_uuid:
-            return
+            return {
+                "ok": False,
+                "sent": False,
+                "reason": reason,
+                "error": "wristband_write_uuid_missing",
+            }
         try:
             await self._wb_client.write_gatt_char(
                 self.wristband_write_uuid,
-                b"\x02",
+                payload,
                 response=False,
             )
+            return {
+                "ok": True,
+                "sent": True,
+                "reason": reason,
+                "payload_hex": payload.hex(),
+            }
         except Exception as exc:
-            log.debug("Send leave signal failed: %s", exc)
+            log.debug("Send wristband signal failed (%s): %s", reason, exc)
+            return {
+                "ok": False,
+                "sent": False,
+                "reason": reason,
+                "error": str(exc),
+            }
+
+    def send_reminder_signal(
+        self,
+        *,
+        reason: str = "manual",
+        require_focus_active: bool = False,
+        signal_hex: str = "01",
+    ) -> dict[str, Any]:
+        """线程安全地触发手环提醒信号（默认 0x01）。"""
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            return {
+                "ok": False,
+                "sent": False,
+                "reason": reason,
+                "error": "ble_loop_not_running",
+            }
+        try:
+            payload = self._decode_signal_hex(signal_hex)
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "sent": False,
+                "reason": reason,
+                "error": str(exc),
+            }
+        future = asyncio.run_coroutine_threadsafe(
+            self._send_wristband_signal(
+                payload=payload,
+                reason=reason,
+                require_focus_active=require_focus_active,
+            ),
+            loop,
+        )
+        try:
+            return future.result(timeout=3.0)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "sent": False,
+                "reason": reason,
+                "error": str(exc),
+            }
+
+    @staticmethod
+    def _decode_signal_hex(signal_hex: str) -> bytes:
+        text = str(signal_hex or "").strip().lower()
+        if text.startswith("0x"):
+            text = text[2:]
+        if len(text) == 1:
+            text = f"0{text}"
+        if len(text) != 2:
+            raise ValueError("invalid_signal_hex")
+        try:
+            value = int(text, 16)
+        except Exception as exc:
+            raise ValueError("invalid_signal_hex") from exc
+        return bytes([value])
+
+    async def _maybe_send_leave_signal(self, previous_at_desk: bool, current_at_desk: bool):
+        if not previous_at_desk or current_at_desk:
+            return
+        await self._send_wristband_signal(
+            payload=b"\x01",
+            reason="leave_desk",
+            require_focus_active=True,
+        )
 
     def _maybe_sync_supabase(self):
         user_id = os.getenv("ADHD_USER_ID", "").strip()
@@ -543,7 +722,9 @@ class BleRunner:
             self._supabase_repo.insert_telemetry(
                 user_id=user_id,
                 hrv=wb.get("sdnn") or wb.get("hrv"),   # 优先存 SDNN
-                stress_level=wb.get("stress_level"),
+                stress_level=wb.get("stress_level")
+                if wb.get("stress_level") is not None
+                else sq.get("stress_level"),
                 distance_meters=pre.get("distance_m"),
                 is_at_desk=bool(pre.get("is_at_desk", False)),
                 squeeze_pressure=sq.get("pressure_raw"),
@@ -641,6 +822,7 @@ class BleRunner:
             "sdnn":           telemetry_store.sdnn,
             "hrv":            telemetry_store.hrv,
             "focus":          telemetry_store.focus,
+            "focus_active":   telemetry_store.focus_active,
             "stress_level":   telemetry_store.fused_stress(),
             "metrics_status": telemetry_store.metrics_status,
         })

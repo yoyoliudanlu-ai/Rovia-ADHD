@@ -134,7 +134,23 @@ TOOL_ENTRY("supabase_list_todos",
            "List todos from the configured Supabase table for the provisioned user UUID. Use for requests about tasks or todos stored in the external database.",
            "{\"type\":\"object\",\"properties\":{\"filter\":{\"type\":\"string\",\"enum\":[\"all\",\"open\",\"completed\"]},\"limit\":{\"type\":\"integer\"}}}",
            tools_supabase_list_todos_handler)
+TOOL_ENTRY("supabase_create_todo",
+           "Create a new todo in the configured Supabase table for the provisioned user UUID.",
+           "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Todo text to create\"}},\"required\":[\"text\"]}",
+           tools_supabase_create_todo_handler)
+TOOL_ENTRY("supabase_update_todo",
+           "Update an existing Supabase todo by numeric id. Use this to rename a task or change its completion state.",
+           "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\",\"description\":\"Todo id\"},\"text\":{\"type\":\"string\",\"description\":\"Updated todo text\"},\"completed\":{\"type\":\"boolean\",\"description\":\"Optional completion state\"}},\"required\":[\"id\"]}",
+           tools_supabase_update_todo_handler)
+TOOL_ENTRY("supabase_complete_todo",
+           "Mark an existing Supabase todo complete by numeric id.",
+           "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\",\"description\":\"Todo id\"}},\"required\":[\"id\"]}",
+           tools_supabase_complete_todo_handler)
 TOOL_ENTRY("imu_read",
            "Read acceleration (g) and angular velocity (dps) from ICM-45686 IMU via I2C. Drives CS pin HIGH for I2C mode and SAO pin LOW for address 0x68. Default pins: SCL=1, SDA=2, SAO=3, CS=4.",
            "{\"type\":\"object\",\"properties\":{\"scl_pin\":{\"type\":\"integer\",\"description\":\"I2C SCL GPIO (default 1)\"},\"sda_pin\":{\"type\":\"integer\",\"description\":\"I2C SDA GPIO (default 2)\"},\"sao_pin\":{\"type\":\"integer\",\"description\":\"SAO address-select GPIO (default 3)\"},\"cs_pin\":{\"type\":\"integer\",\"description\":\"CS I2C-mode-select GPIO (default 4)\"}}}",
            tools_imu_read_handler)
+TOOL_ENTRY("max30102_read",
+           "Read heart rate and focus score from MAX30102 sensor via I2C. Collects 8s of PPG data and returns BPM, RMSSD, SDNN, pNN50, stress index, and focus score 0-100.",
+           "{\"type\":\"object\",\"properties\":{\"sda_pin\":{\"type\":\"integer\",\"description\":\"I2C SDA GPIO pin\"},\"scl_pin\":{\"type\":\"integer\",\"description\":\"I2C SCL GPIO pin\"}},\"required\":[\"sda_pin\",\"scl_pin\"]}",
+           tools_max30102_read_handler)

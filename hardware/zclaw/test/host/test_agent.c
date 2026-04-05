@@ -592,6 +592,42 @@ TEST(local_admin_commands_bypass_llm_and_report_state)
     ASSERT(strstr(text, "persisted=3") != NULL);
     ASSERT(strstr(text, "safe_mode=yes") != NULL);
 
+    agent_test_process_message("/time set 1712370000");
+    ASSERT(mock_llm_request_count() == 0);
+    ASSERT(mock_tools_execute_calls() == 0);
+    ASSERT(recv_channel_text(channel_q, text, sizeof(text)) == 1);
+    ASSERT(strstr(text, "Time set:") != NULL);
+    ASSERT(strstr(text, "1712370000") != NULL);
+
+    vQueueDelete(channel_q);
+    return 0;
+}
+
+TEST(local_admin_bootcount_clear_resets_counter)
+{
+    QueueHandle_t channel_q;
+    char text[CHANNEL_TX_BUF_SIZE];
+
+    reset_state();
+
+    channel_q = xQueueCreate(4, sizeof(channel_output_msg_t));
+    ASSERT(channel_q != NULL);
+    agent_test_set_queues(channel_q, NULL);
+    local_admin_set_safe_mode(true);
+    local_admin_set_device_configured(true);
+    mock_memory_set_kv("boot_count", "3");
+
+    agent_test_process_message("/bootcount clear");
+    ASSERT(mock_llm_request_count() == 0);
+    ASSERT(mock_tools_execute_calls() == 0);
+    ASSERT(recv_channel_text(channel_q, text, sizeof(text)) == 1);
+    ASSERT(strstr(text, "persisted=0") != NULL);
+    ASSERT(strstr(text, "safe_mode=yes") != NULL);
+
+    agent_test_process_message("/bootcount");
+    ASSERT(recv_channel_text(channel_q, text, sizeof(text)) == 1);
+    ASSERT(strstr(text, "persisted=0") != NULL);
+
     vQueueDelete(channel_q);
     return 0;
 }
@@ -1027,6 +1063,13 @@ int test_agent_all(void)
 
     printf("  local_admin_reboot_and_factory_reset_commands... ");
     if (test_local_admin_reboot_and_factory_reset_commands() == 0) {
+        printf("OK\n");
+    } else {
+        failures++;
+    }
+
+    printf("  local_admin_bootcount_clear_resets_counter... ");
+    if (test_local_admin_bootcount_clear_resets_counter() == 0) {
         printf("OK\n");
     } else {
         failures++;

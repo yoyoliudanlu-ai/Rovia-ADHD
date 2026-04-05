@@ -43,11 +43,20 @@ def parse_wristband(data: bytes) -> dict:
             focus = _i(raw.get("focus")) if raw.get("focus") is not None else (
                 _hrv_to_focus(hrv) if hrv is not None else None
             )
+            focus_active_raw = raw.get("focus_active")
+            if focus_active_raw is None and raw.get("focus_state") is not None:
+                focus_active_raw = raw.get("focus_state")
+            focus_active = (
+                bool(focus_active_raw)
+                if focus_active_raw is not None
+                else bool(focus) if focus is not None else None
+            )
             return {
                 "metrics_status": "ready",
                 "hrv":          hrv,
                 "sdnn":         _f(raw.get("sdnn")),
                 "focus":        focus,
+                "focus_active": focus_active,
                 "stress_level": _i(raw.get("stress") or raw.get("stress_level")) or (
                     _hrv_to_stress(hrv) if hrv is not None else None
                 ),
@@ -60,16 +69,18 @@ def parse_wristband(data: bytes) -> dict:
         if len(data) >= 2:
             sdnn_ms     = float(data[0])   # byte[0] = HRV SDNN in ms
             focus_state = int(data[1])     # byte[1] = 0x00 off / 0x01 on
+            focus_active = focus_state == 0x01
             sdnn_value  = sdnn_ms if sdnn_ms > 0 else None
             focus       = _hrv_to_focus(sdnn_value) if sdnn_value is not None else 0
             # byte[1] 专注开关为 off 时强制归零
-            if focus_state == 0x00:
+            if not focus_active:
                 focus = 0
             return {
                 "metrics_status": "ready",
                 "hrv":          None,
                 "sdnn":         sdnn_value,
                 "focus":        focus,
+                "focus_active": focus_active,
                 "stress_level": _hrv_to_stress(sdnn_value) if sdnn_value is not None else None,
             }
     except Exception:

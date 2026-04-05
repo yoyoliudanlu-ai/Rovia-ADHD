@@ -1,11 +1,11 @@
 """FastAPI 后端入口。
 
-启动：
-  cd /Volumes/ORICO/项目/ADHD
-  uvicorn backend.api.server:app --host 0.0.0.0 --port 8000 --reload
+启动（端口 8001，避免与根目录 backend 8000 冲突）：
+  cd /Volumes/ORICO/项目/ADHD/Rovia-ADHD/apps/api
+  uvicorn backend.api.server:app --host 0.0.0.0 --port 8001 --reload
 
 WebSocket 实时推送：
-  ws://localhost:8000/ws/telemetry
+  ws://localhost:8001/ws/telemetry
 
   收到的消息格式：
   {"event": "wristband", "data": {...}}

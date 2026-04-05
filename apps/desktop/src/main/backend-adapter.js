@@ -148,13 +148,26 @@ class BackendEventAdapter {
   }
 
   handleWristband(data) {
+    const previousFocusActive = Boolean(this.snapshot.wristband?.focus_active);
     this.snapshot.wristband = {
       ...this.snapshot.wristband,
       ...data
     };
     this.snapshot.meta.updated_at = Date.now() / 1000;
 
-    return [this.buildTelemetryEvent("backend_wristband")];
+    const events = [this.buildTelemetryEvent("backend_wristband")];
+    const nextFocusActive = Boolean(this.snapshot.wristband?.focus_active);
+    if (nextFocusActive && !previousFocusActive) {
+      events.push({
+        type: "enter_task",
+        triggerSource: "wearable",
+        focusActive: true,
+        sourceDevice: "backend_wristband",
+        timestamp: toIsoTimestamp(this.snapshot.meta.updated_at)
+      });
+    }
+
+    return events;
   }
 
   handleSqueeze(data) {
@@ -211,6 +224,10 @@ class BackendEventAdapter {
       hrv,
       sdnn,
       focusScore,
+      focusActive:
+        wristband.focus_active === undefined
+          ? undefined
+          : Boolean(wristband.focus_active),
       stressScore,
       distanceMeters: toNumberOrUndefined(presence.distance_m),
       wearableRssi: toNumberOrUndefined(presence.rssi),

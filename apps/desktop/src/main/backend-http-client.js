@@ -236,6 +236,7 @@ class BackendHttpClient {
   }
 
   mapTodoRow(row) {
+    const scheduledAt = row.start_time || null;
     return {
       id: row.id,
       title: row.task_text || "Untitled task",
@@ -244,7 +245,8 @@ class BackendHttpClient {
       backendSynced: true,
       priority: toNumberOrNull(row.priority) ?? 1,
       updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
-      startTime: row.start_time || null,
+      scheduledAt,
+      startTime: scheduledAt,
       endTime: row.end_time || null
     };
   }
@@ -398,7 +400,7 @@ class BackendHttpClient {
       body: {
         task_text: todo.title,
         priority: todo.priority ?? 1,
-        start_time: todo.startTime || null,
+        start_time: todo.startTime || todo.scheduledAt || null,
         end_time: todo.endTime || null
       }
     });
@@ -413,7 +415,7 @@ class BackendHttpClient {
         task_text: todo.title,
         is_completed: todo.status === "done",
         priority: todo.priority ?? 1,
-        start_time: todo.startTime || null,
+        start_time: todo.startTime || todo.scheduledAt || null,
         end_time: todo.endTime || null
       }
     });
@@ -490,6 +492,21 @@ class BackendHttpClient {
       method: "POST",
       body: {
         device_type: deviceType
+      }
+    });
+  }
+
+  async sendReminderSignal({
+    reason = "manual",
+    requireFocusActive = false,
+    signalHex = "01"
+  } = {}) {
+    return this.request("/api/devices/remind", {
+      method: "POST",
+      body: {
+        reason,
+        require_focus_active: Boolean(requireFocusActive),
+        signal_hex: String(signalHex || "01")
       }
     });
   }

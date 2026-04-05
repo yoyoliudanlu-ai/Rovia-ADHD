@@ -12,10 +12,13 @@
  *
  * 环境变量（优先级：环境变量 > 默认值）：
  *   ZCLAW_WEIXIN_DIR   状态目录，默认 ~/.openclaw/openclaw-weixin（兼容已有 openclaw 账号）
+ *   WEIXIN_BRIDGE_MODE 桥接模式：mqtt 或 relay
  *   MQTT_URI           MQTT broker URI，如 mqtts://xxx.emqxsl.cn:8883
  *   MQTT_USER          MQTT 用户名
  *   MQTT_PASS          MQTT 密码
  *   MQTT_TOPIC         话题前缀，默认 zclaw
+ *   ZCLAW_WEB_RELAY_URL relay 模式下的本地 web relay 地址，默认 http://127.0.0.1:8787/api/chat
+ *   ZCLAW_WEB_API_KEY   relay 模式请求头 X-Zclaw-Key（可选）
  *   WEIXIN_ACCOUNT     指定账号 ID，不填则自动使用第一个
  */
 
@@ -24,6 +27,8 @@ import path from "node:path";
 import os   from "node:os";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
+
+import { loadBridgeConfig, relayChat } from "./scripts/lib/weixin_bridge_lib.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -378,14 +383,6 @@ function doListAccounts() {
 // ── MQTT 桥接 ─────────────────────────────────────────────────
 
 async function doBridge() {
-  let mqtt;
-  try {
-    mqtt = require("mqtt");
-  } catch {
-    console.error("❌ 缺少 mqtt 包，请先运行：npm install mqtt");
-    process.exit(1);
-  }
-
   // 读取账号
   let account;
   try {
@@ -400,71 +397,80 @@ async function doBridge() {
   const BASE_URL = account.baseUrl || ILINK_BASE_URL;
   let defaultTarget = extractLatestTarget(account);
 
-  // 读取 MQTT 配置
-  const MQTT_URI   = process.env.MQTT_URI   || "";
-  const MQTT_USER  = process.env.MQTT_USER  || "";
-  const MQTT_PASS  = process.env.MQTT_PASS  || "";
-  const MQTT_TOPIC = process.env.MQTT_TOPIC || "zclaw";
+  const bridgeConfig = loadBridgeConfig(process.env);
+  let client = null;
+  let topicIn = "";
 
-  const TOPIC_IN  = `${MQTT_TOPIC}/in`;
-  const TOPIC_OUT = `${MQTT_TOPIC}/out`;
-
-  if (!MQTT_URI) {
-    console.error("❌ 请设置环境变量 MQTT_URI，例如：");
-    console.error("   export MQTT_URI=mqtts://xxxx.emqxsl.cn:8883");
-    process.exit(1);
-  }
-
-  // 连接 MQTT
-  const mqttOpts = {
-    ...(MQTT_USER && { username: MQTT_USER }),
-    ...(MQTT_PASS && { password: MQTT_PASS }),
-    reconnectPeriod: 5000,
-    connectTimeout:  10000,
-  };
-
-  const client = mqtt.connect(MQTT_URI, mqttOpts);
-
-  client.on("connect", () => {
-    console.log(`✅ MQTT 已连接: ${MQTT_URI}`);
-    client.subscribe(TOPIC_OUT, { qos: 1 }, (err) => {
-      if (err) console.error("订阅失败:", err);
-      else     console.log(`📡 订阅: ${TOPIC_OUT}`);
-    });
-  });
-  client.on("error",      (e) => console.error("MQTT 错误:", e.message));
-  client.on("disconnect", ()  => console.log("MQTT 断开"));
-
-  // zclaw 回复 → 微信
-  client.on("message", async (topic, payload) => {
-    if (topic !== TOPIC_OUT) return;
-    let msg;
-    try { msg = JSON.parse(payload.toString()); } catch { return; }
-
-    const { text, user_id, ctx } = msg;
-    if (!text) return;
-
-    let targetUserId = user_id?.trim() || "";
-    let targetCtx = ctx?.trim() || "";
-    if (!targetUserId) {
-      defaultTarget = defaultTarget || extractLatestTarget(loadAccount(account.accountId));
-      if (!defaultTarget?.userId) {
-        console.error("发送微信消息失败: 未找到默认联系人，请先给 bot 发一条消息完成绑定");
-        return;
-      }
-      targetUserId = defaultTarget.userId;
-      if (!targetCtx) {
-        targetCtx = defaultTarget.contextToken || "";
-      }
-    }
-
-    console.log(`→ 微信 [${targetUserId}]: ${text.slice(0, 80)}`);
+  if (bridgeConfig.mode === "mqtt") {
+    let mqtt;
     try {
-      await sendWeixin(TOKEN, BASE_URL, targetUserId, targetCtx, text);
-    } catch (e) {
-      console.error("发送微信消息失败:", e.message);
+      mqtt = require("mqtt");
+    } catch {
+      console.error("❌ 缺少 mqtt 包，请先运行：npm install mqtt");
+      process.exit(1);
     }
-  });
+
+    if (!bridgeConfig.mqttUri) {
+      console.error("❌ 请设置环境变量 MQTT_URI，例如：");
+      console.error("   export MQTT_URI=mqtts://xxxx.emqxsl.cn:8883");
+      process.exit(1);
+    }
+
+    topicIn = `${bridgeConfig.mqttTopic}/in`;
+    const topicOut = `${bridgeConfig.mqttTopic}/out`;
+
+    const mqttOpts = {
+      ...(bridgeConfig.mqttUser && { username: bridgeConfig.mqttUser }),
+      ...(bridgeConfig.mqttPass && { password: bridgeConfig.mqttPass }),
+      reconnectPeriod: 5000,
+      connectTimeout:  10000,
+    };
+
+    client = mqtt.connect(bridgeConfig.mqttUri, mqttOpts);
+
+    client.on("connect", () => {
+      console.log(`✅ MQTT 已连接: ${bridgeConfig.mqttUri}`);
+      client.subscribe(topicOut, { qos: 1 }, (err) => {
+        if (err) console.error("订阅失败:", err);
+        else     console.log(`📡 订阅: ${topicOut}`);
+      });
+    });
+    client.on("error",      (e) => console.error("MQTT 错误:", e.message));
+    client.on("disconnect", ()  => console.log("MQTT 断开"));
+
+    // zclaw 回复 → 微信
+    client.on("message", async (topic, payload) => {
+      if (topic !== topicOut) return;
+      let msg;
+      try { msg = JSON.parse(payload.toString()); } catch { return; }
+
+      const { text, user_id, ctx } = msg;
+      if (!text) return;
+
+      let targetUserId = user_id?.trim() || "";
+      let targetCtx = ctx?.trim() || "";
+      if (!targetUserId) {
+        defaultTarget = defaultTarget || extractLatestTarget(loadAccount(account.accountId));
+        if (!defaultTarget?.userId) {
+          console.error("发送微信消息失败: 未找到默认联系人，请先给 bot 发一条消息完成绑定");
+          return;
+        }
+        targetUserId = defaultTarget.userId;
+        if (!targetCtx) {
+          targetCtx = defaultTarget.contextToken || "";
+        }
+      }
+
+      console.log(`→ 微信 [${targetUserId}]: ${text.slice(0, 80)}`);
+      try {
+        await sendWeixin(TOKEN, BASE_URL, targetUserId, targetCtx, text);
+      } catch (e) {
+        console.error("发送微信消息失败:", e.message);
+      }
+    });
+  } else {
+    console.log(`✅ 使用 relay 模式: ${bridgeConfig.relayUrl}`);
+  }
 
   // 微信长轮询 → MQTT
   const syncFile = path.join(ACCOUNTS_DIR, `${account.accountId}.sync.json`);
@@ -533,8 +539,23 @@ async function doBridge() {
         defaultTarget = { userId, contextToken: ctx || "" };
       }
 
-      const payload = JSON.stringify({ text, user_id: userId, ctx });
-      client.publish(TOPIC_IN, payload, { qos: 1 });
+      if (bridgeConfig.mode === "mqtt") {
+        const payload = JSON.stringify({ text, user_id: userId, ctx });
+        client.publish(topicIn, payload, { qos: 1 });
+        continue;
+      }
+
+      try {
+        const reply = await relayChat({
+          relayUrl: bridgeConfig.relayUrl,
+          relayApiKey: bridgeConfig.relayApiKey,
+          message: text,
+        });
+        console.log(`→ 微信 [${userId}]: ${reply.slice(0, 80)}`);
+        await sendWeixin(TOKEN, BASE_URL, userId, ctx, reply);
+      } catch (e) {
+        console.error("relay 请求失败:", e.message);
+      }
     }
   }
 }

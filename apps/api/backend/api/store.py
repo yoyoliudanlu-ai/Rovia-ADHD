@@ -19,6 +19,7 @@ class TelemetryStore:
     hrv: float | None = None
     sdnn: float | None = None
     focus: int | None = None
+    focus_active: bool | None = None
     hrv_stress: int | None = None
     metrics_status: str = "offline"
 
@@ -69,6 +70,8 @@ class TelemetryStore:
             self.focus = computed_focus
         elif parsed.get("focus") is not None and self.focus is None:
             self.focus = parsed["focus"]
+        if parsed.get("focus_active") is not None:
+            self.focus_active = bool(parsed["focus_active"])
         if parsed.get("stress_level") is not None:
             self.hrv_stress = parsed["stress_level"]
 
@@ -143,6 +146,7 @@ class TelemetryStore:
                 "sdnn":          self.sdnn,
                 "hrv":           self.hrv,
                 "focus":         self.focus,
+                "focus_active":  self.focus_active,
                 "stress_level":  self.fused_stress(),
                 "metrics_status": self.metrics_status,
             },

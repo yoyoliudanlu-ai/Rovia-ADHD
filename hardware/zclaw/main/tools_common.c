@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
 
 bool tools_validate_string_input(const char *str, size_t max_len, char *error, size_t error_len)
 {
@@ -118,6 +119,79 @@ bool tools_validate_https_url(const char *url, char *error, size_t error_len)
 
     if (strlen(url) > 256) {
         snprintf(error, error_len, "Error: URL too long (max 256)");
+        return false;
+    }
+
+    return true;
+}
+
+static bool is_local_http_host(const char *host)
+{
+    long second_octet = 0;
+
+    if (!host || host[0] == '\0') {
+        return false;
+    }
+
+    if (strcmp(host, "localhost") == 0) {
+        return true;
+    }
+    if (strncmp(host, "127.", 4) == 0 ||
+        strncmp(host, "10.", 3) == 0 ||
+        strncmp(host, "192.168.", 8) == 0) {
+        return true;
+    }
+
+    if (sscanf(host, "172.%ld.", &second_octet) == 1) {
+        return second_octet >= 16 && second_octet <= 31;
+    }
+
+    return false;
+}
+
+bool tools_validate_https_or_local_http_url(const char *url, char *error, size_t error_len)
+{
+    const char *host_start;
+    const char *host_end;
+    size_t host_len;
+    char host[64];
+
+    if (!url || strlen(url) < 10) {
+        snprintf(error, error_len, "Error: invalid URL");
+        return false;
+    }
+
+    if (strlen(url) > 256) {
+        snprintf(error, error_len, "Error: URL too long (max 256)");
+        return false;
+    }
+
+    if (strncmp(url, "https://", 8) == 0) {
+        return true;
+    }
+
+    if (strncmp(url, "http://", 7) != 0) {
+        snprintf(error, error_len, "Error: URL must use HTTPS");
+        return false;
+    }
+
+    host_start = url + 7;
+    host_end = host_start;
+    while (*host_end != '\0' && *host_end != '/' && *host_end != ':' && *host_end != '?') {
+        host_end++;
+    }
+
+    host_len = (size_t)(host_end - host_start);
+    if (host_len == 0 || host_len >= sizeof(host)) {
+        snprintf(error, error_len, "Error: invalid URL");
+        return false;
+    }
+
+    memcpy(host, host_start, host_len);
+    host[host_len] = '\0';
+
+    if (!is_local_http_host(host)) {
+        snprintf(error, error_len, "Error: HTTP URL only allowed for local proxy hosts");
         return false;
     }
 

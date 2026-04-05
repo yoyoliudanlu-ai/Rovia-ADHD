@@ -31,6 +31,24 @@ typedef struct {
     int limit;
 } supabase_todo_query_t;
 
+typedef struct {
+    char text[161];
+} supabase_todo_create_t;
+
+typedef struct {
+    int id;
+    bool has_text;
+    char text[161];
+    bool has_completed;
+    bool completed;
+} supabase_todo_update_t;
+
+typedef enum {
+    SUPABASE_HTTP_METHOD_GET = 0,
+    SUPABASE_HTTP_METHOD_POST,
+    SUPABASE_HTTP_METHOD_PATCH,
+} supabase_http_method_t;
+
 static bool load_required_config_value(const char *key,
                                        char *value,
                                        size_t value_len,
@@ -94,7 +112,7 @@ static bool load_supabase_todo_config(supabase_todo_config_t *config,
         return false;
     }
 
-    if (!tools_validate_https_url(config->url, error, sizeof(error))) {
+    if (!tools_validate_https_or_local_http_url(config->url, error, sizeof(error))) {
         snprintf(result, result_len, "%s", error);
         return false;
     }
@@ -156,6 +174,129 @@ static bool parse_query_args(const cJSON *input,
             return false;
         }
         query->limit = limit_json->valueint;
+    }
+
+    return true;
+}
+
+static bool parse_required_todo_text(const cJSON *input,
+                                     const char *field_name,
+                                     char *dst,
+                                     size_t dst_len,
+                                     char *result,
+                                     size_t result_len)
+{
+    const cJSON *text_json;
+    char error[96] = {0};
+
+    if (!input || !dst || dst_len == 0) {
+        snprintf(result, result_len, "Error: internal todo text parser state missing");
+        return false;
+    }
+
+    text_json = cJSON_GetObjectItemCaseSensitive((cJSON *)input, field_name);
+    if (!text_json || !cJSON_IsString(text_json) || !text_json->valuestring) {
+        snprintf(result, result_len, "Error: %s must be a string", field_name);
+        return false;
+    }
+    if (text_json->valuestring[0] == '\0') {
+        snprintf(result, result_len, "Error: %s cannot be empty", field_name);
+        return false;
+    }
+    if (!tools_validate_string_input(text_json->valuestring, dst_len - 1, error, sizeof(error))) {
+        snprintf(result, result_len, "Error: invalid %s: %s", field_name, error);
+        return false;
+    }
+
+    snprintf(dst, dst_len, "%s", text_json->valuestring);
+    return true;
+}
+
+static bool parse_required_todo_id(const cJSON *input,
+                                   int *id_out,
+                                   char *result,
+                                   size_t result_len)
+{
+    const cJSON *id_json;
+
+    if (!input || !id_out) {
+        snprintf(result, result_len, "Error: internal todo id parser state missing");
+        return false;
+    }
+
+    id_json = cJSON_GetObjectItemCaseSensitive((cJSON *)input, "id");
+    if (!id_json || !cJSON_IsNumber(id_json)) {
+        snprintf(result, result_len, "Error: id must be an integer");
+        return false;
+    }
+    if (id_json->valueint <= 0) {
+        snprintf(result, result_len, "Error: id must be greater than 0");
+        return false;
+    }
+
+    *id_out = id_json->valueint;
+    return true;
+}
+
+static bool parse_create_args(const cJSON *input,
+                              supabase_todo_create_t *create,
+                              char *result,
+                              size_t result_len)
+{
+    if (!create) {
+        snprintf(result, result_len, "Error: internal create state missing");
+        return false;
+    }
+    memset(create, 0, sizeof(*create));
+    return parse_required_todo_text(input, "text", create->text, sizeof(create->text), result, result_len);
+}
+
+static bool parse_update_args(const cJSON *input,
+                              supabase_todo_update_t *update,
+                              char *result,
+                              size_t result_len)
+{
+    const cJSON *text_json;
+    const cJSON *completed_json;
+    char error[96] = {0};
+
+    if (!update) {
+        snprintf(result, result_len, "Error: internal update state missing");
+        return false;
+    }
+
+    memset(update, 0, sizeof(*update));
+    if (!parse_required_todo_id(input, &update->id, result, result_len)) {
+        return false;
+    }
+
+    text_json = cJSON_GetObjectItemCaseSensitive((cJSON *)input, "text");
+    if (text_json) {
+        if (!cJSON_IsString(text_json) || !text_json->valuestring || text_json->valuestring[0] == '\0') {
+            snprintf(result, result_len, "Error: text must be a non-empty string");
+            return false;
+        }
+        if (!tools_validate_string_input(text_json->valuestring, sizeof(update->text) - 1, error, sizeof(error))) {
+            snprintf(result, result_len, "Error: invalid text: %s", error);
+            return false;
+        }
+        snprintf(update->text, sizeof(update->text), "%s", text_json->valuestring);
+        update->has_text = true;
+    }
+
+    completed_json = cJSON_GetObjectItemCaseSensitive((cJSON *)input, "completed");
+    if (completed_json) {
+        if (!cJSON_IsBool(completed_json)) {
+            snprintf(result, result_len, "Error: completed must be a boolean");
+            return false;
+        }
+        update->completed = cJSON_IsTrue(completed_json);
+        update->has_completed = true;
+    }
+
+    if (!update->has_text && !update->has_completed) {
+        snprintf(result, result_len, "Error: update requires text and/or completed");
+        return false;
     }
 
     return true;
@@ -303,12 +444,16 @@ static void shorten_iso_time(const char *raw, char *buf, size_t buf_len)
 static int s_test_http_status = 200;
 static char s_test_http_body[SUPABASE_RESPONSE_BUF_SIZE] = "[]";
 static char s_test_last_request_url[SUPABASE_REQUEST_URL_BUF_SIZE] = {0};
+static char s_test_last_request_method[16] = {0};
+static char s_test_last_request_body[SUPABASE_RESPONSE_BUF_SIZE] = {0};
 
 void tools_supabase_test_reset(void)
 {
     s_test_http_status = 200;
     snprintf(s_test_http_body, sizeof(s_test_http_body), "[]");
     s_test_last_request_url[0] = '\0';
+    s_test_last_request_method[0] = '\0';
+    s_test_last_request_body[0] = '\0';
 }
 
 void tools_supabase_test_set_http_response(int status_code, const char *body)
@@ -322,19 +467,37 @@ const char *tools_supabase_test_last_request_url(void)
     return s_test_last_request_url;
 }
 
-static esp_err_t supabase_http_get(const supabase_todo_config_t *config,
-                                   const char *url,
-                                   char *response,
-                                   size_t response_len,
-                                   int *status_code)
+const char *tools_supabase_test_last_request_method(void)
+{
+    return s_test_last_request_method;
+}
+
+const char *tools_supabase_test_last_request_body(void)
+{
+    return s_test_last_request_body;
+}
+
+static esp_err_t supabase_http_request(const supabase_todo_config_t *config,
+                                       supabase_http_method_t method,
+                                       const char *url,
+                                       const char *body,
+                                       bool return_representation,
+                                       char *response,
+                                       size_t response_len,
+                                       int *status_code)
 {
     (void)config;
+    (void)return_representation;
 
     if (!response || response_len == 0 || !status_code) {
         return ESP_ERR_INVALID_ARG;
     }
 
     snprintf(s_test_last_request_url, sizeof(s_test_last_request_url), "%s", url ? url : "");
+    snprintf(s_test_last_request_method, sizeof(s_test_last_request_method), "%s",
+             method == SUPABASE_HTTP_METHOD_POST ? "POST" :
+             method == SUPABASE_HTTP_METHOD_PATCH ? "PATCH" : "GET");
+    snprintf(s_test_last_request_body, sizeof(s_test_last_request_body), "%s", body ? body : "");
     snprintf(response, response_len, "%s", s_test_http_body);
     *status_code = s_test_http_status;
     return ESP_OK;
@@ -377,11 +540,14 @@ static esp_err_t supabase_http_event_handler(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
-static esp_err_t supabase_http_get(const supabase_todo_config_t *config,
-                                   const char *url,
-                                   char *response,
-                                   size_t response_len,
-                                   int *status_code)
+static esp_err_t supabase_http_request(const supabase_todo_config_t *config,
+                                       supabase_http_method_t method,
+                                       const char *url,
+                                       const char *body,
+                                       bool return_representation,
+                                       char *response,
+                                       size_t response_len,
+                                       int *status_code)
 {
     supabase_http_ctx_t ctx;
     esp_http_client_config_t http_config;
@@ -411,10 +577,23 @@ static esp_err_t supabase_http_get(const supabase_todo_config_t *config,
     }
 
     snprintf(auth_header, sizeof(auth_header), "Bearer %s", config->key);
-    esp_http_client_set_method(client, HTTP_METHOD_GET);
+    if (method == SUPABASE_HTTP_METHOD_POST) {
+        esp_http_client_set_method(client, HTTP_METHOD_POST);
+    } else if (method == SUPABASE_HTTP_METHOD_PATCH) {
+        esp_http_client_set_method(client, HTTP_METHOD_PATCH);
+    } else {
+        esp_http_client_set_method(client, HTTP_METHOD_GET);
+    }
     esp_http_client_set_header(client, "apikey", config->key);
     esp_http_client_set_header(client, "Authorization", auth_header);
     esp_http_client_set_header(client, "Accept", "application/json");
+    if (return_representation) {
+        esp_http_client_set_header(client, "Prefer", "return=representation");
+    }
+    if (body) {
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+        esp_http_client_set_post_field(client, body, (int)strlen(body));
+    }
 
     err = esp_http_client_perform(client);
     *status_code = esp_http_client_get_status_code(client);
@@ -427,6 +606,162 @@ static esp_err_t supabase_http_get(const supabase_todo_config_t *config,
     return err;
 }
 #endif
+
+static bool build_table_root_url(const supabase_todo_config_t *config,
+                                 char *url,
+                                 size_t url_len,
+                                 char *result,
+                                 size_t result_len)
+{
+    char base_url[SUPABASE_URL_MAX_LEN + 1];
+    int written;
+
+    if (!config || !url || url_len == 0) {
+        snprintf(result, result_len, "Error: internal table URL builder state missing");
+        return false;
+    }
+
+    copy_without_trailing_slash(base_url, sizeof(base_url), config->url);
+    written = snprintf(url, url_len, "%s/rest/v1/%s", base_url, config->table);
+    if (written < 0 || (size_t)written >= url_len) {
+        snprintf(result, result_len, "Error: Supabase table URL too long");
+        return false;
+    }
+    return true;
+}
+
+static bool build_row_match_url(const supabase_todo_config_t *config,
+                                int todo_id,
+                                char *url,
+                                size_t url_len,
+                                char *result,
+                                size_t result_len)
+{
+    char base_url[SUPABASE_URL_MAX_LEN + 1];
+    int written;
+
+    if (!config || !url || url_len == 0) {
+        snprintf(result, result_len, "Error: internal row URL builder state missing");
+        return false;
+    }
+
+    copy_without_trailing_slash(base_url, sizeof(base_url), config->url);
+    written = snprintf(url, url_len,
+                       "%s/rest/v1/%s?id=eq.%d&%s=eq.%s",
+                       base_url,
+                       config->table,
+                       todo_id,
+                       config->user_field,
+                       config->user_id);
+    if (written < 0 || (size_t)written >= url_len) {
+        snprintf(result, result_len, "Error: Supabase row URL too long");
+        return false;
+    }
+    return true;
+}
+
+static bool build_create_body(const supabase_todo_config_t *config,
+                              const supabase_todo_create_t *create,
+                              char *body,
+                              size_t body_len,
+                              char *result,
+                              size_t result_len)
+{
+    cJSON *root;
+    char *json;
+
+    if (!config || !create || !body || body_len == 0) {
+        snprintf(result, result_len, "Error: internal create body state missing");
+        return false;
+    }
+
+    root = cJSON_CreateObject();
+    if (!root) {
+        snprintf(result, result_len, "Error: failed to build todo JSON");
+        return false;
+    }
+    cJSON_AddStringToObject(root, config->user_field, config->user_id);
+    cJSON_AddStringToObject(root, config->text_field, create->text);
+    cJSON_AddBoolToObject(root, config->done_field, false);
+    json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json) {
+        snprintf(result, result_len, "Error: failed to serialize todo JSON");
+        return false;
+    }
+
+    snprintf(body, body_len, "%s", json);
+    free(json);
+    if (body[0] == '\0') {
+        snprintf(result, result_len, "Error: empty todo JSON body");
+        return false;
+    }
+    return true;
+}
+
+static bool build_update_body(const supabase_todo_config_t *config,
+                              const supabase_todo_update_t *update,
+                              char *body,
+                              size_t body_len,
+                              char *result,
+                              size_t result_len)
+{
+    cJSON *root;
+    char *json;
+
+    if (!config || !update || !body || body_len == 0) {
+        snprintf(result, result_len, "Error: internal update body state missing");
+        return false;
+    }
+
+    root = cJSON_CreateObject();
+    if (!root) {
+        snprintf(result, result_len, "Error: failed to build update JSON");
+        return false;
+    }
+    if (update->has_text) {
+        cJSON_AddStringToObject(root, config->text_field, update->text);
+    }
+    if (update->has_completed) {
+        cJSON_AddBoolToObject(root, config->done_field, update->completed);
+    }
+    json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json) {
+        snprintf(result, result_len, "Error: failed to serialize update JSON");
+        return false;
+    }
+
+    snprintf(body, body_len, "%s", json);
+    free(json);
+    if (strcmp(body, "{}") == 0 || body[0] == '\0') {
+        snprintf(result, result_len, "Error: update JSON body is empty");
+        return false;
+    }
+    return true;
+}
+
+static bool format_write_success(const char *action,
+                                 int todo_id,
+                                 const char *text,
+                                 char *result,
+                                 size_t result_len)
+{
+    if (!action || !result || result_len == 0) {
+        return false;
+    }
+
+    if (todo_id > 0 && text && text[0] != '\0') {
+        snprintf(result, result_len, "%s todo #%d: %s", action, todo_id, text);
+    } else if (text && text[0] != '\0') {
+        snprintf(result, result_len, "%s todo: %s", action, text);
+    } else if (todo_id > 0) {
+        snprintf(result, result_len, "%s todo #%d", action, todo_id);
+    } else {
+        snprintf(result, result_len, "%s todo", action);
+    }
+    return true;
+}
 
 static bool format_todo_rows(const char *response_json,
                              const supabase_todo_config_t *config,
@@ -540,7 +875,8 @@ bool tools_supabase_list_todos_handler(const cJSON *input, char *result, size_t 
         return false;
     }
 
-    err = supabase_http_get(&config, request_url, response_json, sizeof(response_json), &status_code);
+    err = supabase_http_request(&config, SUPABASE_HTTP_METHOD_GET, request_url, NULL,
+                                false, response_json, sizeof(response_json), &status_code);
     if (err != ESP_OK) {
         snprintf(result, result_len, "Error: Supabase request failed");
         return false;
@@ -552,4 +888,108 @@ bool tools_supabase_list_todos_handler(const cJSON *input, char *result, size_t 
     }
 
     return format_todo_rows(response_json, &config, &query, result, result_len);
+}
+
+bool tools_supabase_create_todo_handler(const cJSON *input, char *result, size_t result_len)
+{
+    supabase_todo_config_t config;
+    supabase_todo_create_t create;
+    char request_url[SUPABASE_REQUEST_URL_BUF_SIZE];
+    char request_body[SUPABASE_RESPONSE_BUF_SIZE];
+    char response_json[SUPABASE_RESPONSE_BUF_SIZE];
+    int status_code = -1;
+    esp_err_t err;
+
+    if (!result || result_len == 0) {
+        return false;
+    }
+
+    if (!parse_create_args(input, &create, result, result_len) ||
+        !load_supabase_todo_config(&config, result, result_len) ||
+        !build_table_root_url(&config, request_url, sizeof(request_url), result, result_len) ||
+        !build_create_body(&config, &create, request_body, sizeof(request_body), result, result_len)) {
+        return false;
+    }
+
+    err = supabase_http_request(&config, SUPABASE_HTTP_METHOD_POST, request_url, request_body,
+                                true, response_json, sizeof(response_json), &status_code);
+    if (err != ESP_OK) {
+        snprintf(result, result_len, "Error: Supabase create request failed");
+        return false;
+    }
+    if (status_code != 200 && status_code != 201) {
+        snprintf(result, result_len, "Error: Supabase create failed (HTTP %d): %s",
+                 status_code, response_json);
+        return false;
+    }
+
+    return format_write_success("Created", 0, create.text, result, result_len);
+}
+
+bool tools_supabase_update_todo_handler(const cJSON *input, char *result, size_t result_len)
+{
+    supabase_todo_config_t config;
+    supabase_todo_update_t update;
+    char request_url[SUPABASE_REQUEST_URL_BUF_SIZE];
+    char request_body[SUPABASE_RESPONSE_BUF_SIZE];
+    char response_json[SUPABASE_RESPONSE_BUF_SIZE];
+    int status_code = -1;
+    esp_err_t err;
+
+    if (!result || result_len == 0) {
+        return false;
+    }
+
+    if (!parse_update_args(input, &update, result, result_len) ||
+        !load_supabase_todo_config(&config, result, result_len) ||
+        !build_row_match_url(&config, update.id, request_url, sizeof(request_url), result, result_len) ||
+        !build_update_body(&config, &update, request_body, sizeof(request_body), result, result_len)) {
+        return false;
+    }
+
+    err = supabase_http_request(&config, SUPABASE_HTTP_METHOD_PATCH, request_url, request_body,
+                                true, response_json, sizeof(response_json), &status_code);
+    if (err != ESP_OK) {
+        snprintf(result, result_len, "Error: Supabase update request failed");
+        return false;
+    }
+    if (status_code != 200 && status_code != 204) {
+        snprintf(result, result_len, "Error: Supabase update failed (HTTP %d): %s",
+                 status_code, response_json);
+        return false;
+    }
+
+    return format_write_success("Updated", update.id, update.has_text ? update.text : NULL, result, result_len);
+}
+
+bool tools_supabase_complete_todo_handler(const cJSON *input, char *result, size_t result_len)
+{
+    supabase_todo_update_t update;
+    cJSON *synthetic_input = NULL;
+    char synthetic_json[64];
+    bool ok;
+
+    if (!result || result_len == 0) {
+        return false;
+    }
+
+    memset(&update, 0, sizeof(update));
+    if (!parse_required_todo_id(input, &update.id, result, result_len)) {
+        return false;
+    }
+
+    snprintf(synthetic_json, sizeof(synthetic_json), "{\"id\":%d,\"completed\":true}", update.id);
+    synthetic_input = cJSON_Parse(synthetic_json);
+    if (!synthetic_input) {
+        snprintf(result, result_len, "Error: failed to build completion request");
+        return false;
+    }
+
+    ok = tools_supabase_update_todo_handler(synthetic_input, result, result_len);
+    cJSON_Delete(synthetic_input);
+    if (!ok) {
+        return false;
+    }
+
+    return format_write_success("Completed", update.id, NULL, result, result_len);
 }

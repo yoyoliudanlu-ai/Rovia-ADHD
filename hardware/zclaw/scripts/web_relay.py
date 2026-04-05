@@ -20,6 +20,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Protocol
 from urllib.parse import urlparse
+import urllib.error
+import urllib.request
 
 
 ESP_LOG_PREFIXES = ("I (", "W (", "E (", "D (", "V (")
@@ -51,6 +53,10 @@ class AppState:
     bridge_target: str
     api_key: str | None
     cors_origin: str | None
+    llm_proxy_upstream_url: str | None
+    llm_proxy_upstream_key: str | None
+    supabase_proxy_upstream_url: str | None
+    supabase_proxy_upstream_key: str | None
 
 
 def normalize_api_key(value: str | None) -> str | None:
@@ -61,6 +67,13 @@ def normalize_api_key(value: str | None) -> str | None:
 
 
 def normalize_origin(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped if stripped else None
+
+
+def normalize_optional_text(value: str | None) -> str | None:
     if value is None:
         return None
     stripped = value.strip()
@@ -147,6 +160,130 @@ def is_request_authorized(provided_key: str | None, expected_key: str | None) ->
     if provided_key is None:
         return False
     return provided_key == expected_key
+
+
+def parse_bearer_token(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    prefix = "bearer "
+    if stripped.lower().startswith(prefix):
+        token = stripped[len(prefix):].strip()
+        return token if token else None
+    return None
+
+
+def is_proxy_request_authorized(
+    authorization_header: str | None,
+    apikey_header: str | None,
+    x_zclaw_key: str | None,
+    expected_key: str | None,
+) -> bool:
+    if expected_key is None:
+        return True
+
+    candidates = (
+        parse_bearer_token(authorization_header),
+        normalize_api_key(apikey_header),
+        normalize_api_key(x_zclaw_key),
+    )
+    return any(candidate == expected_key for candidate in candidates if candidate is not None)
+
+
+def resolve_proxy_target_url(
+    upstream_base_url: str,
+    proxy_prefix: str,
+    request_path: str,
+) -> str:
+    normalized_base = upstream_base_url.rstrip("/")
+    parsed = urlparse(request_path)
+    proxy_path = parsed.path
+
+    if proxy_path == proxy_prefix:
+        suffix = ""
+    elif proxy_path.startswith(proxy_prefix + "/"):
+        suffix = proxy_path[len(proxy_prefix):]
+    else:
+        raise ValueError(f"Path {proxy_path!r} is outside proxy prefix {proxy_prefix!r}")
+
+    target = normalized_base + suffix
+    if parsed.query:
+        target += "?" + parsed.query
+    return target
+
+
+def _copy_header_if_present(headers: dict[str, str], name: str, value: str | None) -> None:
+    if value is None:
+        return
+    stripped = value.strip()
+    if stripped:
+        headers[name] = stripped
+
+
+def build_llm_proxy_headers(
+    content_type: str | None,
+    incoming_authorization: str | None,
+    upstream_api_key: str | None,
+) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    _copy_header_if_present(headers, "Content-Type", content_type)
+    if upstream_api_key:
+        headers["Authorization"] = f"Bearer {upstream_api_key}"
+    else:
+        _copy_header_if_present(headers, "Authorization", incoming_authorization)
+    return headers
+
+
+def build_supabase_proxy_headers(
+    content_type: str | None,
+    prefer: str | None,
+    incoming_authorization: str | None,
+    incoming_apikey: str | None,
+    upstream_api_key: str | None,
+) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    _copy_header_if_present(headers, "Content-Type", content_type)
+    _copy_header_if_present(headers, "Prefer", prefer)
+    if upstream_api_key:
+        headers["Authorization"] = f"Bearer {upstream_api_key}"
+        headers["apikey"] = upstream_api_key
+    else:
+        _copy_header_if_present(headers, "Authorization", incoming_authorization)
+        _copy_header_if_present(headers, "apikey", incoming_apikey)
+    return headers
+
+
+def forward_http_request(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes | None,
+    timeout_s: float = 30.0,
+) -> tuple[int, bytes, str]:
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers=headers,
+        method=method,
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as resp:
+            return (
+                resp.status,
+                resp.read(),
+                resp.headers.get("Content-Type", "application/json; charset=utf-8"),
+            )
+    except urllib.error.HTTPError as exc:
+        return (
+            exc.code,
+            exc.read(),
+            exc.headers.get("Content-Type", "application/json; charset=utf-8"),
+        )
+    except Exception as exc:  # pragma: no cover - runtime/network dependent
+        raise RuntimeError(str(exc)) from exc
 
 
 def is_probable_esp_log_line(line: str) -> bool:
@@ -426,12 +563,18 @@ def make_handler(state: AppState):
                 return
             self.send_response(HTTPStatus.NO_CONTENT)
             self._set_common_headers("text/plain; charset=utf-8")
-            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type,X-Zclaw-Key")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type,X-Zclaw-Key,Authorization,apikey,Prefer",
+            )
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path.startswith("/proxy/supabase"):
+                self._handle_supabase_proxy("GET")
+                return
             if parsed.path == "/":
                 self._send_html(INDEX_HTML)
                 return
@@ -458,10 +601,25 @@ def make_handler(state: AppState):
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if parsed.path != "/api/chat":
-                self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+            if parsed.path == "/api/chat":
+                self._handle_chat_post()
                 return
+            if parsed.path == "/proxy/llm":
+                self._handle_llm_proxy()
+                return
+            if parsed.path.startswith("/proxy/supabase"):
+                self._handle_supabase_proxy("POST")
+                return
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
 
+        def do_PATCH(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path.startswith("/proxy/supabase"):
+                self._handle_supabase_proxy("PATCH")
+                return
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+
+        def _handle_chat_post(self) -> None:
             if not is_post_origin_allowed(
                 self.headers.get("Origin"),
                 self.headers.get("Host"),
@@ -527,7 +685,99 @@ def make_handler(state: AppState):
                 },
             )
 
-        def _read_json(self) -> dict | None:
+        def _handle_llm_proxy(self) -> None:
+            if state.llm_proxy_upstream_url is None:
+                self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "LLM proxy is not configured"})
+                return
+
+            if not is_proxy_request_authorized(
+                authorization_header=self.headers.get("Authorization"),
+                apikey_header=self.headers.get("apikey"),
+                x_zclaw_key=self.headers.get("X-Zclaw-Key"),
+                expected_key=state.api_key,
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
+                return
+
+            if not is_json_content_type(self.headers.get("Content-Type")):
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "Content-Type must be application/json"},
+                )
+                return
+
+            raw_body = self._read_raw_body()
+            if raw_body is None:
+                return
+
+            try:
+                status_code, body, content_type = forward_http_request(
+                    method="POST",
+                    url=resolve_proxy_target_url(
+                        state.llm_proxy_upstream_url,
+                        "/proxy/llm",
+                        self.path,
+                    ),
+                    headers=build_llm_proxy_headers(
+                        content_type=self.headers.get("Content-Type"),
+                        incoming_authorization=self.headers.get("Authorization"),
+                        upstream_api_key=state.llm_proxy_upstream_key,
+                    ),
+                    body=raw_body,
+                )
+            except RuntimeError as exc:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": f"LLM proxy error: {exc}"})
+                return
+
+            self._send_bytes(status_code, body, content_type)
+
+        def _handle_supabase_proxy(self, method: str) -> None:
+            if state.supabase_proxy_upstream_url is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "Supabase proxy is not configured"},
+                )
+                return
+
+            if not is_proxy_request_authorized(
+                authorization_header=self.headers.get("Authorization"),
+                apikey_header=self.headers.get("apikey"),
+                x_zclaw_key=self.headers.get("X-Zclaw-Key"),
+                expected_key=state.api_key,
+            ):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Unauthorized"})
+                return
+
+            raw_body: bytes | None = None
+            if method in {"POST", "PATCH"}:
+                raw_body = self._read_raw_body()
+                if raw_body is None:
+                    return
+
+            try:
+                status_code, body, content_type = forward_http_request(
+                    method=method,
+                    url=resolve_proxy_target_url(
+                        state.supabase_proxy_upstream_url,
+                        "/proxy/supabase",
+                        self.path,
+                    ),
+                    headers=build_supabase_proxy_headers(
+                        content_type=self.headers.get("Content-Type"),
+                        prefer=self.headers.get("Prefer"),
+                        incoming_authorization=self.headers.get("Authorization"),
+                        incoming_apikey=self.headers.get("apikey"),
+                        upstream_api_key=state.supabase_proxy_upstream_key,
+                    ),
+                    body=raw_body,
+                )
+            except RuntimeError as exc:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": f"Supabase proxy error: {exc}"})
+                return
+
+            self._send_bytes(status_code, body, content_type)
+
+        def _read_raw_body(self) -> bytes | None:
             length_header = self.headers.get("Content-Length")
             if not length_header:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Content-Length required"})
@@ -543,7 +793,12 @@ def make_handler(state: AppState):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid body size"})
                 return None
 
-            raw = self.rfile.read(length)
+            return self.rfile.read(length)
+
+        def _read_json(self) -> dict | None:
+            raw = self._read_raw_body()
+            if raw is None:
+                return None
             try:
                 payload = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
@@ -585,6 +840,14 @@ def make_handler(state: AppState):
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
+
+        def _send_bytes(self, status_code: int, body: bytes, content_type: str) -> None:
+            self.send_response(status_code)
+            self._set_common_headers(content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
 
     return RelayHandler
 
@@ -1095,6 +1358,10 @@ def parse_args() -> argparse.Namespace:
 def run_server(args: argparse.Namespace) -> int:
     api_key = normalize_api_key(os.environ.get("ZCLAW_WEB_API_KEY"))
     cors_origin = normalize_origin(args.cors_origin or os.environ.get("ZCLAW_WEB_CORS_ORIGIN"))
+    llm_proxy_upstream_url = normalize_optional_text(os.environ.get("LLM_API_URL"))
+    llm_proxy_upstream_key = normalize_api_key(os.environ.get("LLM_API_KEY"))
+    supabase_proxy_upstream_url = normalize_optional_text(os.environ.get("SUPABASE_URL"))
+    supabase_proxy_upstream_key = normalize_api_key(os.environ.get("SUPABASE_KEY"))
     validate_bind_security(args.host, api_key)
     bridge, bridge_target = create_agent_bridge(args)
     bridge.open()
@@ -1104,6 +1371,10 @@ def run_server(args: argparse.Namespace) -> int:
         bridge_target=bridge_target,
         api_key=api_key,
         cors_origin=cors_origin,
+        llm_proxy_upstream_url=llm_proxy_upstream_url,
+        llm_proxy_upstream_key=llm_proxy_upstream_key,
+        supabase_proxy_upstream_url=supabase_proxy_upstream_url,
+        supabase_proxy_upstream_key=supabase_proxy_upstream_key,
     )
     handler = make_handler(state)
     httpd = ThreadingHTTPServer((args.host, args.port), handler)

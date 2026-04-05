@@ -50,6 +50,10 @@ contextBridge.exposeInMainWorld("rovia", {
     ipcRenderer.invoke("rovia:action", "set-camera-enabled", {
       cameraEnabled
     }),
+  setWristbandFocusTrigger: (enabled) =>
+    ipcRenderer.invoke("rovia:action", "set-wristband-focus-trigger", {
+      enabled
+    }),
   createTodo: (payload, tag = "general") =>
     ipcRenderer.invoke(
       "rovia:action",
