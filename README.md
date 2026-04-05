@@ -37,24 +37,14 @@ Rovia-ADHD/
 - 入口：`apps/desktop/src/main/main.js`
 - 作用：桌宠主程序与任务面板，通过 HTTP + WebSocket 对接 `apps/api`。
 
-### 3) hardware/zclaw
+### 3) hardware（3块硬件端）
 
-- 目录：`hardware/zclaw`
-- 入口：`hardware/zclaw/main/main.c`
-- 作用：ESP32 设备运行时（Agent、消息桥接、工具调用）。  
-- 说明：已移除 HRV 相关模块（MAX30102 工具与 HRV HTTP 服务）。
-
-### 4) hardware/nienie
-
-- 目录：`hardware/nienie`
-- 入口：`hardware/nienie/nienie.ino`
-- 作用：捏捏压力采集与 BLE 上报。
-
-### 5) hardware/nienie_band
-
-- 目录：`hardware/nienie_band`
-- 入口：`hardware/nienie_band/nienie_band.ino`
-- 作用：手环传感器读取、专注按键、蜂鸣器与 BLE 上报。
+- 手环：`hardware/nienie_band/nienie_band.ino`  
+  作用：手环传感器读取、专注按键、蜂鸣器与 BLE 上报。
+- 捏捏：`hardware/nienie/nienie.ino`  
+  作用：捏捏压力采集与 BLE 上报。
+- zclaw：`hardware/zclaw/main/main.c`  
+  作用：ESP32 设备运行时（Agent、消息桥接、工具调用），已移除 HRV 模块。
 
 ## 快速启动
 
