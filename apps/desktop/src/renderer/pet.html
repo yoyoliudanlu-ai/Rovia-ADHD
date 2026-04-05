@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Rovia Pet</title>
+    <link rel="stylesheet" href="./pet.css?v=20260405-09" />
+  </head>
+  <body>
+    <main id="pet-shell" class="pet-shell" data-status="Idle" data-menu-open="false">
+      <section id="pet-camera-box" class="pet-camera-box" aria-label="Camera preview" hidden>
+        <div class="pet-camera-topbar">
+          <span class="pet-camera-pill">CAM</span>
+          <button
+            id="pet-camera-collapse"
+            class="pet-camera-collapse"
+            type="button"
+            aria-label="折叠摄像头"
+            title="折叠摄像头"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M7 14.5 12 9.5l5 5"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="pet-camera-frame">
+          <video
+            id="pet-camera-preview"
+            class="pet-camera-preview"
+            autoplay
+            playsinline
+            muted
+          ></video>
+          <div id="pet-camera-empty" class="pet-camera-empty">
+            <span id="pet-camera-copy" class="pet-camera-copy">正在连接摄像头...</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="pet-stage" class="pet-stage" aria-label="Rovia Desktop Pet">
+        <div class="pet-blob-shell">
+          <div id="pet-blob-root" class="pet-blob-root" aria-hidden="true"></div>
+        </div>
+        <div id="timer-ring" class="timer-ring">
+          <svg viewBox="0 0 120 120" class="timer-svg" aria-hidden="true">
+            <circle class="timer-track" cx="60" cy="60" r="52"></circle>
+            <circle
+              id="timer-progress"
+              class="timer-progress"
+              cx="60"
+              cy="60"
+              r="52"
+            ></circle>
+          </svg>
+          <div id="timer-text" class="timer-text">--:--</div>
+        </div>
+      </section>
+
+      <footer id="pet-dock" class="pet-dock" aria-label="Rovia controls" aria-hidden="true">
+        <button
+          id="primary-action"
+          class="dock-button dock-button-primary"
+          type="button"
+          aria-label="开始专注"
+          title="开始专注"
+        >
+          <span id="primary-icon" class="dock-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          id="locate-action"
+          class="dock-button"
+          type="button"
+          aria-label="桌宠归位"
+          title="桌宠归位"
+        >
+          <span id="locate-icon" class="dock-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          id="secondary-action"
+          class="dock-button"
+          type="button"
+          aria-label="打开面板"
+          title="打开面板"
+        >
+          <span id="secondary-icon" class="dock-icon" aria-hidden="true"></span>
+        </button>
+        <button
+          id="quit-action"
+          class="dock-button dock-button-danger"
+          type="button"
+          aria-label="退出 Rovia"
+          title="退出 Rovia"
+        >
+          <span id="quit-icon" class="dock-icon" aria-hidden="true"></span>
+        </button>
+      </footer>
+
+      <section
+        id="quit-prompt"
+        class="quit-prompt"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="quit-prompt-title"
+        hidden
+      >
+        <span class="quit-prompt-label">EXIT</span>
+        <h2 id="quit-prompt-title" class="quit-prompt-title">要退出 Rovia 吗？</h2>
+        <p id="quit-prompt-copy" class="quit-prompt-copy">本地状态会自动保存。</p>
+        <div class="quit-prompt-actions">
+          <button id="quit-cancel" class="quit-prompt-button quit-prompt-button-soft" type="button">
+            继续留在桌面
+          </button>
+          <button
+            id="quit-confirm"
+            class="quit-prompt-button quit-prompt-button-danger"
+            type="button"
+          >
+            退出应用
+          </button>
+        </div>
+      </section>
+
+      <div id="pet-live" class="sr-only" aria-live="polite"></div>
+    </main>
+
+    <script type="module" src="./pet-blob.js?v=20260405-05"></script>
+    <script type="module" src="./pet.js?v=20260405-09"></script>
+  </body>
+</html>

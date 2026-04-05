@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Rovia Panel</title>
+    <link rel="stylesheet" href="./panel.css?v=20260406-01" />
+  </head>
+  <body>
+    <main class="panel-shell">
+      <section class="panel-frame" data-runtime="idle">
+        <header class="panel-header">
+          <div>
+            <p id="panel-date" class="header-date">APRIL 04, 2026</p>
+            <h1 id="panel-greeting" class="header-greeting">Good morning.</h1>
+          </div>
+          <div class="header-tools">
+            <button
+              id="tab-account-header"
+              class="header-button tab-button"
+              data-tab="account"
+              type="button"
+              aria-label="账号"
+              title="账号"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                <path d="M5 19.5C5 16.4 8.1 14 12 14s7 2.4 7 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button
+              id="quit-button"
+              class="header-button"
+              type="button"
+              data-i18n-aria-label="app.closePanel"
+              data-i18n-title="app.closePanel"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M8 8L16 16M16 8L8 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <nav class="tab-bar" aria-label="Panel Pages">
+          <button
+            id="tab-focus"
+            class="tab-button is-active"
+            data-tab="focus"
+            type="button"
+            data-i18n="tabs.focus"
+          >
+            专注
+          </button>
+          <button id="tab-todo" class="tab-button" data-tab="todo" type="button" data-i18n="tabs.todo">
+            任务
+          </button>
+<button
+            id="tab-friend"
+            class="tab-button"
+            data-tab="friend"
+            type="button"
+            data-i18n="tabs.friend"
+          >
+            好友
+          </button>
+        </nav>
+
+        <section id="page-focus" class="panel-page is-active">
+          <section class="card card-dark focus-hero-card">
+            <div class="focus-hero-head">
+              <span class="sys-label" data-i18n="focus.currentFocus">当前专注</span>
+              <span id="runtime-status" class="status-pill small">Idle</span>
+            </div>
+            <div id="focus-time" class="focus-time">--:--</div>
+            <h2 id="current-task-title" class="focus-hero-title">暂无任务</h2>
+            <div class="focus-hero-meta-row">
+              <span id="focus-trigger" class="status-pill small">暂无会话</span>
+            </div>
+          </section>
+
+          <section class="card card-light focus-dashboard-card">
+            <div class="section-head">
+              <span class="sys-label" data-i18n="focus.dashboard">我的专注数据</span>
+              <button id="sound-toggle" class="quiet-button focus-sound-toggle" type="button">声音关</button>
+            </div>
+
+            <div class="focus-kpi-grid">
+              <article class="focus-kpi-card">
+                <span class="metric-label" data-i18n="focus.bodySignals">身体信号</span>
+                <strong id="focus-sync-mode" class="focus-kpi-value">--</strong>
+                <p id="focus-data-hint" class="focus-kpi-meta">HRV --</p>
+              </article>
+              <article class="focus-kpi-card">
+                <span class="metric-label" data-i18n="focus.dailyRounds">今日轮次</span>
+                <strong id="todo-progress-title" class="focus-kpi-value">0</strong>
+                <p id="todo-progress-meta" class="focus-kpi-meta">完成 0</p>
+              </article>
+              <article class="focus-kpi-card">
+                <span class="metric-label" data-i18n="focus.dailyMinutes">今日时长</span>
+                <strong id="focus-total-minutes" class="focus-kpi-value">0m</strong>
+                <p id="focus-total-meta" class="focus-kpi-meta">平均 0 分/轮</p>
+              </article>
+            </div>
+
+            <div class="focus-chip-row">
+              <span id="focus-completed-count" class="support-inline-chip">准备好</span>
+              <span id="focus-interrupted-count" class="support-inline-chip">在桌前</span>
+              <p id="cue-text" class="focus-inline-copy">等你开始这一轮。</p>
+            </div>
+
+            <div class="action-row focus-action-row">
+              <button id="start-desktop" class="primary-button" type="button" data-i18n="focus.startDesktop">
+                桌面开始
+              </button>
+              <button id="start-wearable" class="secondary-button" type="button">
+                <span data-i18n="focus.startWearable">手环开始</span>
+              </button>
+              <button id="end-focus" class="secondary-button" type="button" data-i18n="focus.endSession">
+                结束会话
+              </button>
+            </div>
+          </section>
+
+          <section class="card card-dark focus-trend-card">
+            <div class="section-head compact">
+              <span class="sys-label inline" data-i18n="focus.trend">7 日趋势</span>
+              <span id="latest-session-meta" class="status-pill small">刚刚</span>
+            </div>
+            <h3 id="latest-session-title" class="support-title">还没有完成记录</h3>
+            <p id="focus-summary" class="card-subtle light">从一个小步骤开始就好。</p>
+            <div id="focus-week-chart" class="focus-week-chart" aria-label="专注趋势图"></div>
+          </section>
+
+          <section class="card card-light">
+            <div class="section-head compact">
+              <span class="sys-label inline" data-i18n="focus.recentSessions">最近记录</span>
+            </div>
+            <div id="recent-sessions-list" class="session-list">
+              <p class="card-subtle">登录后这里会显示最近同步的 focus_sessions。</p>
+            </div>
+          </section>
+
+        </section>
+
+        <section id="page-todo" class="panel-page">
+          <section class="card card-light todo-hero-card">
+            <div class="section-head">
+              <span class="sys-label" data-i18n="todo.activeTask">当前任务</span>
+              <span class="status-pill small" id="todo-sync-mode-copy">local</span>
+            </div>
+            <h2 id="todo-page-current-title" class="todo-highlight">暂无任务</h2>
+            <p id="todo-page-current-meta" class="card-subtle">
+              你可以从这里维护当前任务和待办列表。
+            </p>
+            <div class="todo-kpi-strip">
+              <article class="todo-mini-stat">
+                <span class="metric-label" data-i18n="todo.mainTagLabel">主要标签</span>
+                <strong id="todo-current-echo">暂无任务</strong>
+              </article>
+              <article class="todo-mini-stat">
+                <span class="metric-label" data-i18n="todo.openLabel">待完成</span>
+                <strong id="todo-open-count">0</strong>
+              </article>
+              <article class="todo-mini-stat">
+                <span class="metric-label" data-i18n="todo.doneLabel">已完成</span>
+                <strong id="todo-done-count">0</strong>
+              </article>
+            </div>
+            <p id="todo-summary-note" class="card-subtle todo-summary-note">
+              Rovia keeps your next small step visible, without forcing urgency.
+            </p>
+          </section>
+
+          <section class="card card-light">
+            <span class="sys-label" data-i18n="todo.newTodo">新增任务</span>
+            <form id="todo-form" class="todo-form">
+              <input
+                id="todo-input"
+                type="text"
+                placeholder="新增一个任务"
+                maxlength="80"
+                aria-label="新增任务"
+                data-i18n-placeholder="todo.newTodoPlaceholder"
+                data-i18n-aria-label="todo.newTodoPlaceholder"
+              />
+              <input
+                id="todo-date"
+                type="date"
+                aria-label="任务日期"
+              />
+              <input
+                id="todo-time"
+                type="time"
+                aria-label="任务时间"
+              />
+              <select id="todo-tag" aria-label="任务类型">
+                <option value="study" data-i18n="tags.study">学习</option>
+                <option value="work" data-i18n="tags.work">工作</option>
+                <option value="home" data-i18n="tags.home">家务</option>
+                <option value="health" data-i18n="tags.health">健康</option>
+                <option value="social" data-i18n="tags.social">社交</option>
+                <option value="general" selected data-i18n="tags.general">其他</option>
+              </select>
+              <button class="primary-button compact" type="submit" data-i18n="todo.addAction">新增</button>
+            </form>
+          </section>
+
+          <section class="card card-light">
+            <div class="section-head">
+              <span class="sys-label" data-i18n="todo.stream">任务面板</span>
+            </div>
+            <div id="todo-list" class="todo-list"></div>
+          </section>
+        </section>
+
+        <section id="page-squeeze" class="panel-page">
+          <section
+            id="squeeze-hero-card"
+            class="card card-dark focus-hero-card squeeze-hero-card"
+            data-regulation="steady"
+          >
+            <div class="focus-hero-head">
+              <span class="sys-label" data-i18n="squeeze.live">捏捏实时状态</span>
+              <span id="squeeze-regulation-pill" class="status-pill small">calm</span>
+            </div>
+            <div class="squeeze-hero-grid">
+              <div
+                id="squeeze-visual-stage"
+                class="squeeze-visual-stage"
+                data-regulation="steady"
+                style="--pressure-ratio: 0; --frequency-ratio: 0"
+              >
+                <div class="squeeze-stage-halo" aria-hidden="true"></div>
+                <div class="squeeze-stage-grid" aria-hidden="true"></div>
+                <div class="squeeze-rovia-avatar" aria-hidden="true">
+                  <span class="squeeze-rovia-eye squeeze-rovia-eye-left"></span>
+                  <span class="squeeze-rovia-eye squeeze-rovia-eye-right"></span>
+                </div>
+                <div class="squeeze-frequency-badge">
+                  <span class="metric-label">RPM</span>
+                  <strong id="squeeze-live-rate">0</strong>
+                </div>
+              </div>
+              <div class="squeeze-hero-metrics">
+                <div>
+                  <p class="metric-label" data-i18n="squeeze.currentLevel">当前力度</p>
+                  <h2 id="squeeze-live-level" class="squeeze-live-level">Idle</h2>
+                </div>
+                <div class="squeeze-pressure-chip">
+                  <span class="metric-label" data-i18n="squeeze.pressure">压力值</span>
+                  <strong id="squeeze-live-pressure">0</strong>
+                  <span id="squeeze-live-pressure-meta" class="squeeze-pressure-meta">0 / 4095</span>
+                </div>
+                <div class="squeeze-pressure-chip squeeze-pressure-chip-soft">
+                  <span class="metric-label" data-i18n="squeeze.mappedPressure">映射压力</span>
+                  <strong id="squeeze-live-percent">0%</strong>
+                  <span id="squeeze-live-percent-meta" class="squeeze-pressure-meta">0%</span>
+                </div>
+              </div>
+            </div>
+            <div class="squeeze-range-meter" aria-hidden="true">
+              <div class="squeeze-range-track">
+                <span id="squeeze-range-fill" class="squeeze-range-fill"></span>
+              </div>
+              <div class="squeeze-range-scale">
+                <span>0</span>
+                <span>2048</span>
+                <span>4095</span>
+              </div>
+            </div>
+            <p id="squeeze-guidance" class="card-subtle light">
+              还没有检测到捏捏动作，连接设备后这里会显示你的调节节奏。
+            </p>
+          </section>
+
+          <section class="card card-light squeeze-dashboard-card">
+            <div class="section-head compact">
+              <span class="sys-label inline" data-i18n="squeeze.frequency">频率数据</span>
+            </div>
+            <div class="focus-kpi-grid">
+              <article class="focus-kpi-card">
+                <span class="metric-label" data-i18n="squeeze.lastMinute">最近 1 分钟</span>
+                <strong id="squeeze-count-minute" class="focus-kpi-value">0</strong>
+                <p id="squeeze-count-minute-meta" class="focus-kpi-meta">0 / min</p>
+              </article>
+              <article class="focus-kpi-card">
+                <span class="metric-label" data-i18n="squeeze.lastFiveMinutes">最近 5 分钟</span>
+                <strong id="squeeze-count-five" class="focus-kpi-value">0</strong>
+                <p id="squeeze-count-five-meta" class="focus-kpi-meta">stable</p>
+              </article>
+              <article class="focus-kpi-card">
+                <span class="metric-label" data-i18n="squeeze.lastDetected">最近一次</span>
+                <strong id="squeeze-last-seen" class="focus-kpi-value">--</strong>
+                <p id="squeeze-last-seen-meta" class="focus-kpi-meta">No pulse</p>
+              </article>
+            </div>
+          </section>
+
+          <section class="card card-light">
+            <div class="section-head compact">
+              <span class="sys-label inline" data-i18n="squeeze.timeline">10 分钟脉冲分布</span>
+            </div>
+            <div id="squeeze-timeline-chart" class="squeeze-timeline-chart"></div>
+            <p id="squeeze-pattern-copy" class="card-subtle">
+              频率越高，越可能说明你正在用捏捏维持专注或缓冲压力。
+            </p>
+          </section>
+        </section>
+
+        <section id="page-friend" class="panel-page">
+          <div class="card-stacked-wrapper">
+            <article class="card card-light">
+              <div class="icon-container icon-purple" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="12" cy="7.5" r="2.5" />
+                  <circle cx="7.5" cy="14.5" r="2.1" />
+                  <circle cx="16.5" cy="14.5" r="2.1" />
+                  <path
+                    d="M10.2 9.4 8.4 12.7M13.8 9.4l1.8 3.3M9.6 16h4.8"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-linecap="round"
+                    stroke-width="1.4"
+                  />
+                </svg>
+              </div>
+              <span class="sys-label" data-i18n="friend.discovery">好友发现</span>
+              <h2 id="friend-headline" class="todo-highlight">找到同频的专注伙伴</h2>
+              <p id="friend-summary" class="card-copy">
+                Rovia 会根据你的任务类型匹配相似目标的人，一起专注。
+              </p>
+            </article>
+          </div>
+
+          <section class="card card-dark cosmos-card">
+            <div class="section-head">
+              <span class="sys-label" data-i18n="friend.map">Rovia 交友地图</span>
+              <span id="friend-count" class="status-pill small">0 matches</span>
+            </div>
+            <div id="friend-cosmos-empty" class="friend-cosmos-empty">
+              匹配成功后才会显示交友地图
+            </div>
+            <div
+              id="friend-cosmos"
+              class="friend-cosmos"
+              aria-label="好友关系宇宙图"
+            ></div>
+            <p id="friend-map-meta" class="card-subtle light">
+              匹配人数将决定地图中 Rovia 的数量。
+            </p>
+          </section>
+
+          <section class="card card-light">
+            <div class="section-head">
+              <span class="sys-label" data-i18n="friend.suggested">推荐好友</span>
+              <span id="friend-active-tags" class="status-pill small">tags: none</span>
+            </div>
+            <div id="friend-list" class="friend-list"></div>
+          </section>
+
+          <section class="card card-light">
+            <div class="section-head">
+              <span class="sys-label" data-i18n="friend.ranking">专注排行榜</span>
+              <span id="friend-ranking-self" class="status-pill small">我的名次 #--</span>
+            </div>
+            <div id="friend-ranking-podium" class="friend-ranking-podium"></div>
+            <div id="friend-ranking-list" class="friend-ranking-list"></div>
+          </section>
+        </section>
+
+        <section id="page-device" class="panel-page">
+          <div class="card-stacked-wrapper">
+            <article class="card card-dark card-olive">
+              <div class="icon-container icon-green" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path
+                    d="M12 6C9 6 7 8 7 10C7 12 9 13 10 15C11 17 10 18 8 19C11 20 15 19 16 16C17 13 15 12 14 10C13 8 15 6 12 6Z"
+                  />
+                </svg>
+              </div>
+              <span class="sys-label" data-i18n="device.status">设备状态</span>
+              <div class="metrics-row">
+                <div class="metric-chip">
+                  <span class="metric-label" data-i18n="device.physio">生理</span>
+                  <strong id="physio-state">ready</strong>
+                </div>
+                <div class="metric-chip">
+                  <span class="metric-label" data-i18n="device.presence">距离</span>
+                  <strong id="presence-state">near</strong>
+                </div>
+                <div class="metric-chip">
+                  <span class="metric-label" data-i18n="device.sync">同步</span>
+                  <strong id="device-sync-mode">local</strong>
+                </div>
+              </div>
+              <div id="physio-metrics" class="device-metrics-strip" aria-label="设备指标"></div>
+              <p id="sensor-time" class="card-subtle light">刚刚更新</p>
+            </article>
+          </div>
+
+          <section class="card card-light">
+            <div class="section-head">
+              <span class="sys-label">BLE DEVICE LINK</span>
+            </div>
+            <div class="device-link-meta">
+              <p id="device-scan-copy" class="card-subtle">未选择设备，当前不会主动连接蓝牙</p>
+              <p id="device-scan-feedback" class="card-subtle" hidden></p>
+            </div>
+            <div id="device-scan-list" class="device-scan-list" aria-live="polite"></div>
+            <div class="action-row device-action-row device-batch-action-row">
+              <button id="device-scan-refresh" class="primary-button" type="button">刷新设备列表</button>
+              <button id="device-connect-submit" class="primary-button" type="button">连接</button>
+              <button id="device-disconnect-all" class="secondary-button danger-button" type="button">断开连接</button>
+            </div>
+            <div class="device-link-grid">
+              <article class="device-link-card" data-device-type="wristband">
+                <div class="device-link-head">
+                  <div>
+                    <span class="sys-label inline">WRISTBAND</span>
+                    <h3 class="device-link-title">手环设备</h3>
+                  </div>
+                  <span id="wristband-connection-state" class="status-pill small">未选择</span>
+                </div>
+                <div class="device-selection-line">
+                  <span class="metric-label">当前选择</span>
+                  <strong id="wristband-selected-name">未选择</strong>
+                </div>
+                <div class="device-mini-grid">
+                  <article class="device-mini-card">
+                    <span class="metric-label">RSSI</span>
+                    <strong id="wristband-rssi">--</strong>
+                  </article>
+                  <article class="device-mini-card">
+                    <span class="metric-label">在位</span>
+                    <strong id="wristband-presence">--</strong>
+                  </article>
+                  <article class="device-mini-card">
+                    <span class="metric-label">HRV</span>
+                    <strong id="wristband-hrv">--</strong>
+                  </article>
+                </div>
+                <p id="wristband-connection-copy" class="card-subtle">
+                  选择设备后由后端自动识别输入/输出特征并建立连接。
+                </p>
+              </article>
+
+              <article class="device-link-card" data-device-type="squeeze">
+                <div class="device-link-head">
+                  <div>
+                    <span class="sys-label inline">SQUEEZE</span>
+                    <h3 class="device-link-title">捏捏设备</h3>
+                  </div>
+                  <span id="squeeze-connection-state" class="status-pill small">未选择</span>
+                </div>
+                <div class="device-selection-line">
+                  <span class="metric-label">当前选择</span>
+                  <strong id="squeeze-selected-name">未选择</strong>
+                </div>
+                <div class="device-mini-grid">
+                  <article class="device-mini-card">
+                    <span class="metric-label">在线状态</span>
+                    <strong id="squeeze-online-state">--</strong>
+                  </article>
+                  <article class="device-mini-card">
+                    <span class="metric-label">压力原始值</span>
+                    <strong id="squeeze-pressure-raw">--</strong>
+                  </article>
+                </div>
+                <p id="squeeze-connection-copy" class="card-subtle">
+                  只选择设备名，UUID 匹配和 notify/read/write 分流全部由后端自动处理。
+                </p>
+              </article>
+            </div>
+          </section>
+
+          <section class="card card-light">
+            <div class="section-head">
+              <span class="sys-label">Camera</span>
+              <div class="camera-head-actions">
+                <span id="camera-status" class="status-pill small">idle</span>
+              </div>
+            </div>
+            <div class="camera-card camera-card-controls">
+              <div class="camera-copy-shell">
+                <p id="camera-copy" class="card-subtle">
+                  打开摄像头后，会在 Rovia 上方的小窗口显示实时画面。
+                </p>
+              </div>
+              <div class="action-row camera-action-row">
+                <button id="camera-start" class="primary-button" type="button">打开摄像头</button>
+                <button id="camera-stop" class="secondary-button" type="button">关闭摄像头</button>
+              </div>
+            </div>
+          </section>
+
+        </section>
+
+        <section id="page-account" class="panel-page">
+          <div class="card-stacked-wrapper">
+            <article class="card card-light auth-card">
+              <div class="auth-copy">
+                <span class="sys-label" data-i18n="account.account">账号</span>
+                <h2 id="auth-title" class="support-title">Supabase 未配置</h2>
+                <p id="auth-meta" class="card-subtle">
+                  填好环境变量后，这里会显示登录状态和云端同步信息。
+                </p>
+              </div>
+              <form id="auth-form" class="auth-form">
+                <div class="auth-mode-row">
+                  <button
+                    id="auth-mode-login"
+                    class="auth-mode-button is-active"
+                    type="button"
+                    data-auth-mode="login"
+                    data-i18n="account.signIn"
+                  >
+                    登录
+                  </button>
+                  <button
+                    id="auth-mode-register"
+                    class="auth-mode-button"
+                    type="button"
+                    data-auth-mode="register"
+                    data-i18n="account.signUp"
+                  >
+                    注册
+                  </button>
+                </div>
+                <div class="auth-input-grid">
+                  <label class="auth-field">
+                    <input
+                      id="auth-email"
+                      type="email"
+                      placeholder="you@domain.com"
+                      autocomplete="username"
+                      aria-label="登录邮箱"
+                      data-i18n-placeholder="account.emailPlaceholder"
+                      data-i18n-aria-label="account.emailPlaceholder"
+                    />
+                  </label>
+                  <label class="auth-field">
+                    <input
+                      id="auth-password"
+                      type="password"
+                      placeholder="密码（至少 6 位）"
+                      autocomplete="current-password"
+                      aria-label="登录密码"
+                      data-i18n-placeholder="account.passwordHintPlaceholder"
+                      data-i18n-aria-label="account.passwordPlaceholder"
+                    />
+                  </label>
+                  <label id="auth-confirm-field" class="auth-field" hidden>
+                    <input
+                      id="auth-confirm-password"
+                      type="password"
+                      placeholder="确认密码"
+                      autocomplete="new-password"
+                      aria-label="确认密码"
+                      data-i18n-placeholder="account.confirmPasswordPlaceholder"
+                      data-i18n-aria-label="account.confirmPasswordPlaceholder"
+                    />
+                  </label>
+                </div>
+                <div class="auth-action-row">
+                  <button id="auth-submit" class="primary-button auth-primary" type="submit" data-i18n="account.signIn">
+                    登录
+                  </button>
+                </div>
+                <div class="auth-secondary-row">
+                  <button id="auth-demo" class="secondary-button auth-secondary" type="button" data-i18n="account.demo">
+                    演示
+                  </button>
+                </div>
+              </form>
+              <div id="auth-user-actions" class="auth-user-actions" hidden>
+                <span id="auth-email-pill" class="auth-user-copy">当前账号：未登录</span>
+                <button id="sign-out-button" class="secondary-button" type="button" data-i18n="account.signOut">
+                  退出登录
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <section class="card card-dark">
+            <div class="section-head">
+              <span class="sys-label" data-i18n="account.profile">个人</span>
+              <span id="sync-mode" class="status-pill small">local</span>
+            </div>
+            <div class="summary-grid">
+              <article class="summary-block">
+                <span class="metric-label" data-i18n="account.currentMood">当前状态</span>
+                <strong id="profile-runtime">Idle</strong>
+              </article>
+              <article class="summary-block">
+                <span class="metric-label" data-i18n="account.currentTag">主要标签</span>
+                <strong id="profile-main-tag">其他</strong>
+              </article>
+            </div>
+            <p id="profile-bio" class="card-subtle light">
+              你当前的任务偏好会用于 Friend 页面的匹配与一起专注推荐。
+            </p>
+          </section>
+
+          <section class="card card-light">
+            <div class="section-head compact">
+              <span class="sys-label" data-i18n="account.app">应用</span>
+            </div>
+            <p class="card-subtle" data-i18n="account.appCopy">
+              退出前会自动保存本地状态，并断开当前桌宠连接。
+            </p>
+            <div class="action-row account-app-actions">
+              <button
+                id="account-quit-app"
+                class="secondary-button danger-button"
+                type="button"
+                data-i18n="account.quitApp"
+              >
+                退出 Rovia
+              </button>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="./panel.js?v=20260406-01"></script>
+  </body>
+</html>

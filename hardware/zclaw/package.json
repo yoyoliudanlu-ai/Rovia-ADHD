@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "test:node": "node --test test/node/*.mjs",
+    "weixin:bridge": "bash scripts/run_weixin_bridge.sh",
+    "weixin:notifier": "bash scripts/run_weixin_todo_notifier.sh",
+    "weixin:notifier:once": "bash scripts/run_weixin_todo_notifier.sh once"
+  },
+  "dependencies": {
+    "mqtt": "^5.15.1"
+  }
+}

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>多维体社交流体空间</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #1a1a1a 0%, #000000 100%);
+            touch-action: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        #ui-container {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.4);
+            pointer-events: none;
+            font-size: 13px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            user-select: none;
+            z-index: 10;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-container">群聚交互 • 拖拽吸引</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/simplex-noise@2.4.0/simplex-noise.min.js"></script>
+
+    <script>
+        /**
+         * 物理与视觉全局配置
+         */
+        const CONFIG = {
+            floatStrength: 0.02,    // 回弹中心的力量 (更柔和，给群聚留空间)
+            floatDamping: 0.92,    // 阻尼，控制停下的速度
+            bobbingSpeed: 0.0015,  // 漂浮波动速度
+            bobbingRange: 1.5,     // 漂浮波动幅度 (扩大社交空间)
+            noiseSpeed: 0.0008,    // 表面蠕动速度
+            noiseStrength: 0.2,    // 表面蠕动幅度
+            deformImpact: 1.8,     // 拖拽形变强度
+            separationDist: 4.2,   // 实体间的排斥距离
+            separationForce: 0.015 // 排斥力强度
+        };
+
+        // 配色方案库 (为每个实体赋予不同的性格色彩)
+        const PALETTES = [
+            [0xfadadd, 0xcde1f5, 0xd8c8f0, 0xe8f2cc], // 经典淡雅
+            [0xffecd2, 0xfcb69f, 0xff9a9e, 0xfecfef], // 暖阳橘粉
+            [0xa1c4fd, 0xc2e9fb, 0xe0c3fc, 0x8ec5fc], // 冰蓝紫罗兰
+            [0xd4fc79, 0x96e6a1, 0x84fab0, 0x8fd3f4], // 清新薄荷
+            [0xfbc2eb, 0xa6c1ee, 0xfccb90, 0xd57eeb]  // 梦幻极光
+        ];
+
+        let scene, camera, renderer;
+        let mouse, targetMouse;
+        let isDragging = false;
+        let simplex;
+        let characters = [];
+        let baseGeometry;
+
+        // --- 核心实体类 ---
+        class FluidCharacter {
+            constructor(id, palette, homeOffset) {
+                this.id = id;
+                this.homeOffset = homeOffset; // 初始/静止状态下的专属偏移坐标
+                this.currentPos = homeOffset.clone();
+                this.velocity = new THREE.Vector3(0, 0, 0);
+
+                // 个体差异化参数
+                this.seed = Math.random() * 1000;
+                this.speedMult = 0.8 + Math.random() * 0.4;
+
+                // 克隆几何体以实现独立的 CPU 顶点形变
+                this.geometry = baseGeometry.clone();
+                this.geometry.userData.origPos = this.geometry.attributes.position.array.slice();
+
+                // 生成独立材质
+                this.material = this.createMaterial(palette);
+
+                this.mesh = new THREE.Mesh(this.geometry, this.material);
+                this.mesh.position.copy(this.currentPos);
+                scene.add(this.mesh);
+            }
+
+            createMaterial(colors) {
+                return new THREE.ShaderMaterial({
+                    uniforms: {
+                        uTime: { value: 0 },
+                        uColor1: { value: new THREE.Color(colors[0]) },
+                        uColor2: { value: new THREE.Color(colors[1]) },
+                        uColor3: { value: new THREE.Color(colors[2]) },
+                        uColor4: { value: new THREE.Color(colors[3]) }
+                    },
+                    vertexShader: `
+                        varying vec2 vUv;
+                        varying vec3 vNormal;
+                        varying vec3 vViewPosition;
+                        void main() {
+                            vUv = uv;
+                            vNormal = normalize(normalMatrix * normal);
+                            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                            vViewPosition = -mvPosition.xyz;
+                            gl_Position = projectionMatrix * mvPosition;
+                        }
+                    `,
+                    fragmentShader: `
+                        varying vec2 vUv;
+                        varying vec3 vNormal;
+                        varying vec3 vViewPosition;
+                        uniform float uTime;
+                        uniform vec3 uColor1;
+                        uniform vec3 uColor2;
+                        uniform vec3 uColor3;
+                        uniform vec3 uColor4;
+
+                        void main() {
+                            vec3 normal = normalize(vNormal);
+                            vec3 viewDir = normalize(vViewPosition);
+                            
+                            float fTerm = 1.0 - max(0.0, dot(normal, viewDir));
+                            float fresnel = pow(fTerm, 2.5);
+                            
+                            float iridescencePhase = fTerm * 3.5; 
+                            float t = uTime * 0.4;
+                            
+                            vec3 c1 = mix(uColor1, uColor2, sin(vUv.x * 4.0 + t + iridescencePhase) * 0.5 + 0.5);
+                            vec3 c2 = mix(uColor3, uColor4, cos(vUv.y * 4.0 - t - iridescencePhase) * 0.5 + 0.5);
+                            vec3 baseColor = mix(c1, c2, sin(t * 0.3 + fTerm) * 0.5 + 0.5);
+                            
+                            vec3 pearlSheen = vec3(0.98, 0.96, 0.99);
+                            vec3 skinColor = mix(baseColor, pearlSheen, fresnel * 0.7);
+
+                            // 渲染眼睛
+                            vec2 leftEyePos = vec2(0.18, 0.55);
+                            vec2 rightEyePos = vec2(0.28, 0.55);
+                            float eyeRadius = 0.012;
+                            float eyeEdge = 0.003; 
+
+                            vec2 uvL = vUv - leftEyePos;
+                            uvL.x *= 2.0; 
+                            float dL = length(uvL);
+
+                            vec2 uvR = vUv - rightEyePos;
+                            uvR.x *= 2.0;
+                            float dR = length(uvR);
+
+                            float eyeMask = smoothstep(eyeRadius, eyeRadius + eyeEdge, min(dL, dR));
+                            vec3 finalColor = mix(vec3(0.1, 0.1, 0.12), skinColor, eyeMask);
+
+                            gl_FragColor = vec4(finalColor, 1.0);
+                        }
+                    `
+                });
+            }
+
+            updatePhysics(time, allChars) {
+                // 1. 基础运动：怠速漂浮 vs 交互追踪
+                if (isDragging) {
+                    const dragTarget = new THREE.Vector3(targetMouse.x * 8, targetMouse.y * 5, 0);
+                    // 引入一定随机偏移，防止完全重叠到一个精准的点
+                    dragTarget.add(new THREE.Vector3(Math.sin(this.seed) * 1.5, Math.cos(this.seed) * 1.5, 0));
+                    this.velocity.add(dragTarget.sub(this.currentPos).multiplyScalar(0.04 * this.speedMult));
+                } else {
+                    const bobbingY = Math.sin(time * CONFIG.bobbingSpeed * this.speedMult + this.seed) * CONFIG.bobbingRange;
+                    const bobbingX = Math.cos(time * CONFIG.bobbingSpeed * 0.8 * this.speedMult + this.seed) * (CONFIG.bobbingRange * 0.6);
+
+                    const homeTarget = this.homeOffset.clone().add(new THREE.Vector3(bobbingX, bobbingY, 0));
+                    const force = homeTarget.sub(this.currentPos).multiplyScalar(CONFIG.floatStrength);
+                    this.velocity.add(force);
+                }
+
+                // 2. 社交排斥力 (Boids Separation)
+                let separationForce = new THREE.Vector3();
+                for (let other of allChars) {
+                    if (other.id === this.id) continue;
+
+                    let diff = this.currentPos.clone().sub(other.currentPos);
+                    let dist = diff.length();
+
+                    // 如果实体过近，产生相互推开的力
+                    if (dist < CONFIG.separationDist && dist > 0.001) {
+                        diff.normalize();
+                        // 距离越近，排斥力成倍增加
+                        let push = (CONFIG.separationDist - dist) * CONFIG.separationForce;
+                        separationForce.add(diff.multiplyScalar(push));
+                    }
+                }
+                this.velocity.add(separationForce);
+
+                // 3. 应用物理
+                this.velocity.multiplyScalar(CONFIG.floatDamping);
+                this.currentPos.add(this.velocity);
+                this.mesh.position.copy(this.currentPos);
+
+                // 4. 旋转跟随矢量
+                this.mesh.rotation.z = this.velocity.x * 0.25;
+                this.mesh.rotation.x = -this.velocity.y * 0.25;
+            }
+
+            updateSurface(time) {
+                // 更新 Shader 时间
+                this.material.uniforms.uTime.value = time * 0.001 + this.seed;
+
+                const t = time * CONFIG.noiseSpeed;
+                const posAttr = this.geometry.attributes.position;
+                const orig = this.geometry.userData.origPos;
+
+                // 鼠标交互世界坐标计算
+                const mouseWorld = new THREE.Vector3(targetMouse.x * 8, targetMouse.y * 5, 0);
+
+                for (let i = 0; i < posAttr.count; i++) {
+                    const ix = i * 3;
+                    const x = orig[ix];
+                    const y = orig[ix + 1];
+                    const z = orig[ix + 2];
+
+                    // 个体差异化的表面蠕动
+                    const noise = simplex.noise3D(
+                        x * 0.45 + t + this.seed,
+                        y * 0.45 + t + this.seed,
+                        z * 0.45
+                    ) * CONFIG.noiseStrength;
+
+                    let deformation = 0;
+                    if (isDragging) {
+                        const vPos = new THREE.Vector3(x, y, z).applyMatrix4(this.mesh.matrixWorld);
+                        const dist = vPos.distanceTo(mouseWorld);
+                        deformation = Math.max(0, (4.0 - dist) * 0.12 * CONFIG.deformImpact);
+                    }
+
+                    const ratio = 1.0 + noise + deformation;
+                    posAttr.setXYZ(i, x * ratio, y * ratio, z * ratio);
+                }
+
+                posAttr.needsUpdate = true;
+                this.geometry.computeVertexNormals();
+            }
+        }
+
+        // --- 主系统生命周期 ---
+        function init() {
+            mouse = new THREE.Vector2();
+            targetMouse = new THREE.Vector2();
+            simplex = new SimplexNoise();
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            // 拉远相机以容纳多个实体
+            camera.position.z = 15;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const pLight = new THREE.PointLight(0xffffff, 1.5);
+            pLight.position.set(10, 15, 10);
+            scene.add(pLight);
+
+            // 核心优化：减少细分数。50x50 = 2500顶点/实体，保障在 5 个实体时维持 60 FPS
+            baseGeometry = new THREE.SphereGeometry(2.0, 50, 50);
+
+            // 初始化群组
+            createSocialGroup();
+
+            addListeners();
+            animate();
+        }
+
+        function createSocialGroup() {
+            const count = 5;
+            // 定义它们在空间中的初始分布坐标
+            const layouts = [
+                new THREE.Vector3(0, 0, 0),        // 中心
+                new THREE.Vector3(-4.5, 2.5, -2),  // 左上
+                new THREE.Vector3(4.5, -2.0, -1),  // 右下
+                new THREE.Vector3(-3.5, -3.5, 1),  // 左下
+                new THREE.Vector3(5.0, 3.0, -3)    // 右上
+            ];
+
+            for (let i = 0; i < count; i++) {
+                let palette = PALETTES[i % PALETTES.length];
+                characters.push(new FluidCharacter(i, palette, layouts[i]));
+            }
+        }
+
+        function addListeners() {
+            const handleMove = (e) => {
+                const x = e.touches ? e.touches[0].clientX : e.clientX;
+                const y = e.touches ? e.touches[0].clientY : e.clientY;
+                targetMouse.x = (x / window.innerWidth) * 2 - 1;
+                targetMouse.y = -(y / window.innerHeight) * 2 + 1;
+            };
+
+            window.addEventListener('mousedown', (e) => { isDragging = true; handleMove(e); });
+            window.addEventListener('mousemove', handleMove);
+            window.addEventListener('mouseup', () => isDragging = false);
+
+            window.addEventListener('touchstart', (e) => { isDragging = true; handleMove(e); });
+            window.addEventListener('touchmove', (e) => { handleMove(e); e.preventDefault(); }, { passive: false });
+            window.addEventListener('touchend', () => isDragging = false);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = Date.now();
+
+            // 批量更新所有实体
+            for (let char of characters) {
+                char.updatePhysics(time, characters);
+                char.updateSurface(time);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function checkInit() {
+            if (typeof THREE !== 'undefined' && typeof SimplexNoise !== 'undefined') {
+                init();
+            } else {
+                setTimeout(checkInit, 50);
+            }
+        }
+
+        checkInit();
+    </script>
+</body>
+
+</html>

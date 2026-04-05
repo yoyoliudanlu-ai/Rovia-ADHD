@@ -1,0 +1,446 @@
+:root {
+  color-scheme: light;
+  --peach: #ff9a62;
+  --mint: #5bbf9b;
+  --sky: #6da9ff;
+  --rose: #ff7c7c;
+  --butter: #ffd76a;
+  --ink-soft: rgba(35, 39, 52, 0.74);
+  --dock-shadow: 0 10px 28px rgba(24, 22, 38, 0.12);
+  --font-stack: "SF Pro Rounded", "Avenir Next Rounded", "Nunito", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-stack);
+  background: transparent;
+  color: #1d2433;
+}
+
+button {
+  font: inherit;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.pet-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  height: 100%;
+  padding: 8px 6px 4px;
+  -webkit-app-region: drag;
+}
+
+.pet-camera-box {
+  position: relative;
+  width: 136px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+  padding: 5px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(18px);
+  box-shadow:
+    0 16px 36px rgba(21, 18, 28, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  -webkit-app-region: no-drag;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pet-camera-topbar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pet-camera-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.pet-camera-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background 160ms ease;
+}
+
+.pet-camera-collapse:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.pet-camera-collapse svg {
+  width: 14px;
+  height: 14px;
+}
+
+.pet-camera-frame {
+  position: relative;
+  width: 100%;
+  height: 82px;
+  overflow: hidden;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top, rgba(255, 214, 157, 0.18), transparent 40%),
+    rgba(26, 27, 36, 0.88);
+}
+
+.pet-camera-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.pet-camera-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(14, 16, 24, 0.18), rgba(14, 16, 24, 0.36));
+}
+
+.pet-camera-copy {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.pet-stage {
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 2px 0 8px;
+}
+
+.pet-blob-shell {
+  position: relative;
+  width: 172px;
+  height: 172px;
+  overflow: visible;
+  -webkit-app-region: no-drag;
+}
+
+.pet-blob-root {
+  width: 100%;
+  height: 100%;
+}
+
+.pet-blob-root canvas {
+  display: block;
+}
+
+.timer-ring {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 166px;
+  height: 166px;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 180ms ease, transform 180ms ease;
+  z-index: 2;
+}
+
+.timer-svg {
+  width: 166px;
+  height: 166px;
+  transform: rotate(-90deg);
+}
+
+.timer-track,
+.timer-progress {
+  fill: none;
+  stroke-width: 6;
+}
+
+.timer-track {
+  stroke: rgba(255, 255, 255, 0.18);
+}
+
+.timer-progress {
+  stroke: var(--peach);
+  stroke-linecap: round;
+  stroke-dasharray: 327;
+  stroke-dashoffset: 327;
+  transition: stroke-dashoffset 300ms ease, stroke 300ms ease;
+}
+
+.timer-text {
+  position: absolute;
+  bottom: 16px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 10px rgba(22, 24, 36, 0.28);
+}
+
+.pet-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px;
+  border-radius: 999px;
+  background: rgba(28, 27, 39, 0.16);
+  backdrop-filter: blur(16px);
+  -webkit-app-region: no-drag;
+  box-shadow:
+    0 16px 38px rgba(20, 18, 30, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 12px) scale(0.94);
+  transform-origin: center bottom;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
+  z-index: 3;
+}
+
+.pet-shell[data-menu-open="true"] .pet-dock {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.dock-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink-soft);
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  box-shadow: var(--dock-shadow);
+  transition:
+    transform 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.dock-button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.58);
+  outline-offset: 2px;
+}
+
+.dock-button:active {
+  transform: scale(0.97);
+}
+
+.dock-button:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.dock-button-primary {
+  background: rgba(255, 176, 111, 0.82);
+  color: #fff8f2;
+  box-shadow: 0 12px 24px rgba(255, 154, 98, 0.24);
+}
+
+.dock-button-danger {
+  background: rgba(255, 124, 124, 0.2);
+  color: rgba(101, 28, 34, 0.9);
+  box-shadow: 0 12px 24px rgba(255, 124, 124, 0.18);
+}
+
+.dock-button-danger:hover {
+  background: rgba(255, 124, 124, 0.3);
+}
+
+.dock-button[data-active="true"] {
+  background: rgba(255, 255, 255, 0.28);
+  color: rgba(20, 27, 40, 0.92);
+}
+
+.dock-button[data-kind="locate"] {
+  background: rgba(255, 255, 255, 0.18);
+  cursor: grab;
+}
+
+.dock-button[data-kind="locate"].is-dragging {
+  cursor: grabbing;
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.dock-icon {
+  width: 13px;
+  height: 13px;
+  display: inline-block;
+}
+
+.dock-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+}
+
+.pet-shell[data-has-session="true"] .timer-ring,
+.pet-shell[data-status="Completed"] .timer-ring {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.pet-shell[data-status="Support"] .timer-progress {
+  stroke: var(--sky);
+}
+
+.pet-shell[data-status="Focusing"] .timer-progress {
+  stroke: var(--mint);
+}
+
+.pet-shell[data-status="Away"] .timer-progress {
+  stroke: #9ca9c8;
+}
+
+.pet-shell[data-status="Completed"] .timer-progress {
+  stroke: var(--butter);
+}
+
+.pet-shell[data-status="Disconnected"] .timer-progress {
+  stroke: var(--rose);
+}
+
+.quit-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 52px;
+  width: min(208px, calc(100% - 18px));
+  padding: 14px 14px 12px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 18px 36px rgba(26, 22, 32, 0.18);
+  backdrop-filter: blur(16px);
+  transform: translateX(-50%);
+  -webkit-app-region: no-drag;
+  z-index: 4;
+}
+
+.quit-prompt-label {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: rgba(71, 74, 86, 0.56);
+}
+
+.quit-prompt-title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: rgba(22, 28, 38, 0.94);
+}
+
+.quit-prompt-copy {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(53, 58, 70, 0.72);
+}
+
+.quit-prompt-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.quit-prompt-button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.quit-prompt-button:hover {
+  transform: translateY(-1px);
+}
+
+.quit-prompt-button-soft {
+  background: rgba(34, 39, 52, 0.08);
+  color: rgba(28, 31, 43, 0.84);
+}
+
+.quit-prompt-button-danger {
+  background: rgba(255, 124, 124, 0.84);
+  color: #fff8f8;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

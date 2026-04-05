@@ -1,0 +1,13 @@
+.DS_Store
+.env
+**/.env
+!.env.example
+node_modules/
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.git/
+sidecar/.macos-site/
+ADHD/device/wristband/build/

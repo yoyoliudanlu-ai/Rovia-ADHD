@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>灵动浮动流体模型</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #1a1a1a 0%, #000000 100%);
+            touch-action: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        #ui-container {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.4);
+            pointer-events: none;
+            font-size: 13px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui-container">拖拽交互 • 持续漂浮</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/simplex-noise@2.4.0/simplex-noise.min.js"></script>
+
+    <script>
+        /**
+         * 物理与视觉配置
+         */
+        const CONFIG = {
+            floatStrength: 0.05,    // 回弹中心的力量
+            floatDamping: 0.95,    // 阻尼，控制停下的速度
+            bobbingSpeed: 0.0015,  // 漂浮波动速度
+            bobbingRange: 0.8,     // 漂浮波动幅度
+            noiseSpeed: 0.0008,    // 表面蠕动速度
+            noiseStrength: 0.2,    // 表面蠕动幅度
+            deformImpact: 1.8      // 拖拽形变强度
+        };
+
+        let scene, camera, renderer, blob;
+        let mouse, targetMouse;
+        let isDragging = false;
+        let simplex;
+
+        // 运动物理变量
+        let currentPos, velocity;
+
+        function init() {
+            // 初始化基础组件
+            mouse = new THREE.Vector2();
+            targetMouse = new THREE.Vector2();
+            simplex = new SimplexNoise();
+            currentPos = new THREE.Vector3(0, 0, 0);
+            velocity = new THREE.Vector3(0, 0, 0);
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 10;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            // 光照设置
+            scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+            const pLight = new THREE.PointLight(0xffffff, 1.5);
+            pLight.position.set(10, 10, 10);
+            scene.add(pLight);
+
+            createBlob();
+            addListeners();
+            animate();
+        }
+
+        function createBlob() {
+            // 1. 创建细分的球体几何体
+            const geometry = new THREE.SphereGeometry(2.2, 100, 100);
+            // 存储原始顶点数据以便进行噪声偏移计算
+            geometry.userData.origPos = geometry.attributes.position.array.slice();
+
+            // 2. 幻彩珠光着色器材质
+            const material = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 },
+                    uColor1: { value: new THREE.Color(0xfadadd) }, // 淡粉
+                    uColor2: { value: new THREE.Color(0xcde1f5) }, // 淡蓝
+                    uColor3: { value: new THREE.Color(0xd8c8f0) }, // 淡紫
+                    uColor4: { value: new THREE.Color(0xe8f2cc) }  // 浅绿
+                },
+                vertexShader: `
+                    varying vec2 vUv;
+                    varying vec3 vNormal;
+                    varying vec3 vViewPosition;
+                    void main() {
+                        vUv = uv;
+                        vNormal = normalize(normalMatrix * normal);
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        vViewPosition = -mvPosition.xyz;
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: `
+                    varying vec2 vUv;
+                    varying vec3 vNormal;
+                    varying vec3 vViewPosition;
+                    uniform float uTime;
+                    uniform vec3 uColor1;
+                    uniform vec3 uColor2;
+                    uniform vec3 uColor3;
+                    uniform vec3 uColor4;
+
+                    void main() {
+                        vec3 normal = normalize(vNormal);
+                        vec3 viewDir = normalize(vViewPosition);
+                        
+                        // 计算菲涅尔项 (中心视线处低, 边缘处高)
+                        float fTerm = 1.0 - max(0.0, dot(normal, viewDir));
+                        float fresnel = pow(fTerm, 2.5);
+                        
+                        // 幻彩珠光混合逻辑
+                        float iridescencePhase = fTerm * 3.5; 
+                        float t = uTime * 0.4;
+                        
+                        vec3 c1 = mix(uColor1, uColor2, sin(vUv.x * 4.0 + t + iridescencePhase) * 0.5 + 0.5);
+                        vec3 c2 = mix(uColor3, uColor4, cos(vUv.y * 4.0 - t - iridescencePhase) * 0.5 + 0.5);
+                        vec3 baseColor = mix(c1, c2, sin(t * 0.3 + fTerm) * 0.5 + 0.5);
+                        
+                        // 赋予珍珠质感的高光
+                        vec3 pearlSheen = vec3(0.98, 0.96, 0.99);
+                        vec3 skinColor = mix(baseColor, pearlSheen, fresnel * 0.7);
+
+                        // 渲染眼睛 (UV 贴图形式)
+                        vec2 leftEyePos = vec2(0.18, 0.55);
+                        vec2 rightEyePos = vec2(0.28, 0.55);
+                        float eyeRadius = 0.012;
+                        float eyeEdge = 0.003; 
+
+                        // 修正 UV 宽高比，绘制圆形眼睛
+                        vec2 uvL = vUv - leftEyePos;
+                        uvL.x *= 2.0; 
+                        float dL = length(uvL);
+
+                        vec2 uvR = vUv - rightEyePos;
+                        uvR.x *= 2.0;
+                        float dR = length(uvR);
+
+                        float eyeMask = smoothstep(eyeRadius, eyeRadius + eyeEdge, min(dL, dR));
+
+                        // 混合皮肤颜色与眼睛颜色
+                        vec3 finalColor = mix(vec3(0.1, 0.1, 0.12), skinColor, eyeMask);
+
+                        gl_FragColor = vec4(finalColor, 1.0);
+                    }
+                `
+            });
+
+            blob = new THREE.Mesh(geometry, material);
+            scene.add(blob);
+        }
+
+        function updateMotion() {
+            const time = Date.now();
+
+            // 基础怠速漂浮
+            const bobbingY = Math.sin(time * CONFIG.bobbingSpeed) * CONFIG.bobbingRange;
+            const bobbingX = Math.cos(time * CONFIG.bobbingSpeed * 0.8) * (CONFIG.bobbingRange * 0.6);
+
+            if (isDragging) {
+                // 交互态：向鼠标/手指位置加速
+                const dragTarget = new THREE.Vector3(targetMouse.x * 6, targetMouse.y * 4, 0);
+                velocity.add(dragTarget.sub(currentPos).multiplyScalar(0.08));
+            } else {
+                // 静态：受弹力约束回到当前漂浮点
+                const homeTarget = new THREE.Vector3(bobbingX, bobbingY, 0);
+                const force = homeTarget.sub(currentPos).multiplyScalar(CONFIG.floatStrength);
+                velocity.add(force);
+            }
+
+            velocity.multiplyScalar(CONFIG.floatDamping);
+            currentPos.add(velocity);
+
+            blob.position.copy(currentPos);
+
+            // 根据速度矢量产生倾斜角
+            blob.rotation.z = velocity.x * 0.3;
+            blob.rotation.x = -velocity.y * 0.3;
+        }
+
+        function updateSurface() {
+            const time = Date.now() * CONFIG.noiseSpeed;
+            const posAttr = blob.geometry.attributes.position;
+            const orig = blob.geometry.userData.origPos;
+
+            for (let i = 0; i < posAttr.count; i++) {
+                const ix = i * 3;
+                const x = orig[ix];
+                const y = orig[ix + 1];
+                const z = orig[ix + 2];
+
+                // 1. 基于 Simplex Noise 的呼吸感波动
+                const noise = simplex.noise3D(x * 0.45 + time, y * 0.45 + time, z * 0.45) * CONFIG.noiseStrength;
+
+                // 2. 交互产生的挤压变形
+                let deformation = 0;
+                if (isDragging) {
+                    // 将局部顶点坐标转换为世界坐标进行距离检测
+                    const vPos = new THREE.Vector3(x, y, z).applyMatrix4(blob.matrixWorld);
+                    const mouseWorld = new THREE.Vector3(targetMouse.x * 6, targetMouse.y * 4, 0);
+                    const dist = vPos.distanceTo(mouseWorld);
+                    // 距离交互点越近，膨胀/变形越明显
+                    deformation = Math.max(0, (4.0 - dist) * 0.12 * CONFIG.deformImpact);
+                }
+
+                const ratio = 1.0 + noise + deformation;
+                posAttr.setXYZ(i, x * ratio, y * ratio, z * ratio);
+            }
+
+            posAttr.needsUpdate = true;
+            blob.geometry.computeVertexNormals();
+        }
+
+        function addListeners() {
+            const handleMove = (e) => {
+                const x = e.touches ? e.touches[0].clientX : e.clientX;
+                const y = e.touches ? e.touches[0].clientY : e.clientY;
+                // 标准化坐标 [-1, 1]
+                targetMouse.x = (x / window.innerWidth) * 2 - 1;
+                targetMouse.y = -(y / window.innerHeight) * 2 + 1;
+            };
+
+            window.addEventListener('mousedown', (e) => { isDragging = true; handleMove(e); });
+            window.addEventListener('mousemove', handleMove);
+            window.addEventListener('mouseup', () => isDragging = false);
+
+            window.addEventListener('touchstart', (e) => { isDragging = true; handleMove(e); });
+            window.addEventListener('touchmove', (e) => { handleMove(e); e.preventDefault(); }, { passive: false });
+            window.addEventListener('touchend', () => isDragging = false);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (blob) {
+                blob.material.uniforms.uTime.value = Date.now() * 0.001;
+                updateMotion();
+                updateSurface();
+                renderer.render(scene, camera);
+            }
+        }
+
+        // 确保外部库加载完成后初始化
+        function checkInit() {
+            if (typeof THREE !== 'undefined' && typeof SimplexNoise !== 'undefined') {
+                init();
+            } else {
+                setTimeout(checkInit, 50);
+            }
+        }
+
+        checkInit();
+    </script>
+</body>
+
+</html>

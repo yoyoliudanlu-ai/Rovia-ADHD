@@ -1,0 +1,22 @@
+{
+  "name": "rovia-desktop-prototype",
+  "version": "0.1.0",
+  "description": "Rovia Desktop pet prototype with task panel, sensor simulation, and optional Supabase sync.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "dev": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "check": "node --check src/main/main.js && node --check src/main/backend-adapter.js && node --check src/main/backend-http-client.js && node --check src/main/state-manager.js && node --check src/main/storage.js && node --check src/main/supabase-service.js && node --check src/main/sidecar-client.js && node --check src/shared/rovia-schema.js && node --check src/preload.js && node --check src/renderer/pet.js && node --check src/renderer/pet-blob.js && node --check src/renderer/panel.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.8",
+    "dotenv": "^16.5.0",
+    "electron": "^35.1.5",
+    "simplex-noise": "^4.0.3",
+    "three": "^0.176.0",
+    "ws": "^8.18.1"
+  }
+}

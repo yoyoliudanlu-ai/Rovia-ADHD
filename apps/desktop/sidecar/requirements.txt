@@ -1,0 +1,4 @@
+bleak==0.22.3
+python-dotenv>=1.0.1,<2.0.0
+supabase>=2.15.0,<3.0.0
+websockets==15.0.1
