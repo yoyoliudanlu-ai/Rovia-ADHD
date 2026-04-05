@@ -30,6 +30,23 @@ class SupabaseRepository:
         data = getattr(resp, "data", resp)
         return data[0] if isinstance(data, list) and data else fallback
 
+    @staticmethod
+    def _parse_iso_datetime(value: Any) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
     # ── 遥测数据 ──────────────────────────────────────────────
 
     def insert_telemetry(
@@ -146,9 +163,25 @@ class SupabaseRepository:
     ) -> dict:
         if status not in FOCUS_STATUS:
             status = "completed"
-        now = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        try:
+            current = (
+                self.client.table("focus_sessions")
+                .select("start_time")
+                .eq("id", session_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            start_dt = self._parse_iso_datetime(
+                self._first(current, {}).get("start_time")
+            )
+            if start_dt is not None and now_dt < start_dt:
+                now_dt = start_dt
+        except Exception:
+            pass
         patch = {
-            "end_time":  now,
+            "end_time":  now_dt.isoformat(),
             "status":    status,
             "is_active": False,
         }
