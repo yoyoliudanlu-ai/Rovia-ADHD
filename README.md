@@ -15,7 +15,6 @@ Rovia-ADHD/
     zclaw/             # ESP32 firmware runtime (HRV 模块已移除)
     nienie/            # 捏捏模块 Arduino sketch
     nienie_band/       # 手环模块 Arduino sketch
-    uploads/           # 其他硬件同学上传入口
   docs/
     migration.md
     runbook.md

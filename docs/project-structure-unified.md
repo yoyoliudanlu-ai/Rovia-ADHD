@@ -16,7 +16,6 @@ workspace/
     zclaw/
     nienie/
     nienie_band/
-    uploads/
   docs/
 ```
 
@@ -102,15 +101,3 @@ workspace/
   - `nienie_band.ino`：单文件 Arduino sketch
 - 关键代码文件说明：
   - `nienie_band.ino`：传感器串口读取、专注按键、蜂鸣器报警、BLE 合并数据发送
-
----
-
-## 模块 6：硬件上传区（hardware/uploads）
-
-- 代码/仓库链接（如有）：
-  - GitHub/Gitee：`<待补充>`
-  - 本地路径：`workspace/hardware/uploads`
-- 代码目录结构说明：
-  - 按 `workspace/hardware/uploads/<project-name>/` 管理后续上传项目
-- 关键代码文件说明：
-  - `README.md`：上传约定与目录规范

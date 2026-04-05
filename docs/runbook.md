@@ -83,7 +83,6 @@ cd workspace/hardware/zclaw
 - `zclaw` 当前仍按自己的 README 和脚本体系运行
 - 若要接入 Supabase todo / relay / notifier，请继续使用它自带的 `scripts/`
 - `zclaw` 已移除 HRV 相关功能（MAX30102 工具与 HRV HTTP 服务）
-- 其他硬件代码统一放到 `workspace/hardware/uploads/`
 
 ## nienie / nienie_band
 
